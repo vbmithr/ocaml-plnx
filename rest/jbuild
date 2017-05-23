@@ -1,0 +1,7 @@
+(library
+ ((name        plnx_rest)
+  (public_name plnx-rest)
+  (modules (plnx_rest))
+  (preprocess (pps (ppx_bin_prot ppx_sexp_conv)))
+  (libraries (plnx core async yojson jsonm ocplib-json-typed
+                   bs-devkit cohttp-async nocrypto hex))))

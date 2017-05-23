@@ -1,0 +1,8 @@
+(library
+ ((name        plnx_ws)
+  (public_name plnx-ws)
+  (modules (plnx_ws))
+  (preprocess (pps (ppx_bin_prot ppx_sexp_conv)))
+  (libraries (plnx core async yojson jsonm ocplib-json-typed
+                   bs-devkit cohttp-async nocrypto hex
+                   wamp-msgpck websocket-async))))

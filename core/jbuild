@@ -1,0 +1,5 @@
+(library
+ ((name        plnx)
+  (public_name plnx)
+  (modules (plnx))
+  (libraries (core ppx_sexp_conv yojson ocplib-json-typed bs-devkit))))
