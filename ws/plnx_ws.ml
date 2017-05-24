@@ -4,13 +4,6 @@ open Async
 open Bs_devkit
 open Plnx
 
-type 'a t = {
-  typ: string ;
-  data: 'a;
-}
-
-let create ~typ ~data = { typ ; data }
-
 let open_connection ?(heartbeat=Time_ns.Span.of_int_sec 25) ?log_ws ?log to_ws =
   let uri_str = "https://api.poloniex.com" in
   let uri = Uri.of_string uri_str in
@@ -69,7 +62,8 @@ let open_connection ?(heartbeat=Time_ns.Span.of_int_sec 25) ?log_ws ?log to_ws =
   let tcp_fun s r w =
     Socket.(setopt s Opt.nodelay true);
     begin
-      if scheme = "https" || scheme = "wss" then Conduit_async_ssl.ssl_connect r w
+      if scheme = "https" || scheme = "wss" then
+        Conduit_async_ssl.ssl_connect ~version:Tlsv1_2 r w
       else return (r, w)
     end >>= fun (ssl_r, ssl_w) ->
     let extra_headers =
@@ -114,8 +108,14 @@ let open_connection ?(heartbeat=Time_ns.Span.of_int_sec 25) ?log_ws ?log to_ws =
   don't_wait_for @@ loop ();
   client_r
 
-module Msgpck = struct
-  type nonrec t = Msgpck.t t
+module M = struct
+  let map_of_msgpck = function
+    | Msgpck.Map elts ->
+      List.fold_left elts ~init:String.Map.empty ~f:begin fun a -> function
+        | String k, v -> String.Map.add a k v
+        | _ -> invalid_arg "map_of_msgpck"
+      end
+    | _ -> invalid_arg "map_of_msgpck"
 
   let subscribe w topics =
     let topics = List.map topics ~f:Uri.of_string in
@@ -125,24 +125,7 @@ module Msgpck = struct
       request_id
     end
 
-  let map_of_msgpck = function
-    | Msgpck.Map elts ->
-      List.fold_left elts ~init:String.Map.empty ~f:begin fun a -> function
-        | String k, v -> String.Map.add a k v
-        | _ -> invalid_arg "map_of_msgpck"
-      end
-    | _ -> invalid_arg "map_of_msgpck"
-
-  let to_msgpck { typ; data } = Msgpck.(Map [String "type", String typ; String "data", data])
-  let of_msgpck elts =
-    try
-      let elts = map_of_msgpck elts in
-      let typ = String.Map.find_exn elts "type" |> Msgpck.to_string in
-      let data = String.Map.find_exn elts "data" in
-      Result.return (create ~typ ~data)
-    with exn -> Result.failf "%s" (Exn.to_string exn)
-
-  let ticker_of_msgpck = function
+  let read_ticker = function
     | Msgpck.List [String symbol; String last; String ask; String bid; String pct_change;
                    String base_volume; String quote_volume; Int is_frozen; String high24h;
                    String low24h
@@ -156,11 +139,11 @@ module Msgpck = struct
       let is_frozen = if is_frozen = 0 then false else true in
       let high24h = Float.of_string high24h in
       let low24h = Float.of_string low24h in
-      { symbol ; last ; ask ; bid ; pct_change ; base_volume ;
+      { Ticker.symbol ; last ; ask ; bid ; pct_change ; base_volume ;
         quote_volume ; is_frozen ; high24h ; low24h }
     | _ -> invalid_arg "ticker_of_msgpck"
 
-  let trade_of_msgpck msg = try
+  let read_trade msg = try
       let msg = map_of_msgpck msg in
       let tradeID = String.Map.find_exn msg "tradeID" |> Msgpck.to_string |> Int.of_string in
       let date = String.Map.find_exn msg "date" |> Msgpck.to_string in
@@ -174,7 +157,7 @@ module Msgpck = struct
       DB.{ ts ; side ; price ; qty }
     with _ -> invalid_arg "trade_of_msgpck"
 
-  let book_of_msgpck msg = try
+  let read_book msg = try
       let msg = map_of_msgpck msg in
       let side = String.Map.find_exn msg "type" |> Msgpck.to_string in
       let price = String.Map.find_exn msg "rate" |> Msgpck.to_string in
@@ -221,3 +204,20 @@ end
 (*     let qty = Option.value_map amount ~default:0 ~f:(Fn.compose satoshis_int_of_float_exn Float.of_string) in *)
 (*     DB.{ side ; price ; qty } *)
 (* end *)
+
+type 'a t = {
+  typ: string ;
+  data: 'a;
+}
+
+let create ~typ ~data = { typ ; data }
+
+let to_msgpck { typ; data } = Msgpck.(Map [String "type", String typ; String "data", data])
+let of_msgpck elts =
+  try
+    let elts = M.map_of_msgpck elts in
+    let typ = String.Map.find_exn elts "type" |> Msgpck.to_string in
+    let data = String.Map.find_exn elts "data" in
+    Result.return (create ~typ ~data)
+  with exn -> Result.failf "%s" (Exn.to_string exn)
+

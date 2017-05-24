@@ -2,21 +2,64 @@ open Core
 
 open Bs_devkit
 
-type ticker = {
-  symbol: string;
-  last: float;
-  ask: float;
-  bid: float;
-  pct_change: float;
-  base_volume: float;
-  quote_volume: float;
-  is_frozen: bool;
-  high24h: float;
-  low24h: float;
-}
+module Ticker = struct
+  type t = {
+    symbol: string;
+    last: float;
+    ask: float;
+    bid: float;
+    pct_change: float;
+    base_volume: float;
+    quote_volume: float;
+    is_frozen: bool;
+    high24h: float;
+    low24h: float;
+  }
+
+  let encoding ~symbol =
+    let open Json_encoding in
+    conv
+      (fun { symbol; last; ask ; bid ; pct_change ; base_volume ; quote_volume ;
+             is_frozen ; high24h ; low24h } ->
+        let open Float in
+        let last = to_string last in
+        let lowestAsk = to_string ask in
+        let highestBid = to_string bid in
+        let percentChange = to_string pct_change in
+        let baseVolume = to_string base_volume in
+        let quoteVolume = to_string quote_volume in
+        let isFrozen = if is_frozen then "1" else "0" in
+        let high24hr = to_string high24h in
+        let low24hr = to_string low24h in
+        (0, last, lowestAsk, highestBid, percentChange, baseVolume,
+         quoteVolume, isFrozen, high24hr, low24hr))
+      (fun (id, last, lowestAsk, highestBid, percentChange, baseVolume,
+            quoteVolume, isFrozen, high24hr, low24hr) -> {
+          symbol ;
+          last = (Float.of_string last) ;
+          ask = (Float.of_string lowestAsk) ;
+          bid = (Float.of_string highestBid) ;
+          pct_change = (Float.of_string percentChange) ;
+          base_volume = (Float.of_string baseVolume) ;
+          quote_volume = (Float.of_string quoteVolume) ;
+          is_frozen = (match Int.of_string isFrozen with 0 -> false | _ -> true) ;
+          high24h = (Float.of_string high24hr) ;
+          low24h = (Float.of_string high24hr) })
+      (obj10
+         (req "id" int)
+         (req "last" string)
+         (req "lowestAsk" string)
+         (req "highestBid" string)
+         (req "percentChange" string)
+         (req "baseVolume" string)
+         (req "quoteVolume" string)
+         (req "isFrozen" string)
+         (req "high24hr" string)
+         (req "low24hr" string))
+end
 
 module Side = struct
-  type t = [`Buy | `Sell] [@@deriving sexp]
+  type t = side
 
   let to_string = function `Buy -> "buy" | `Sell -> "sell"
 
@@ -33,6 +76,11 @@ module Side = struct
     ]
 end
 
+type time_in_force = [
+  | `Fill_or_kill
+  | `Immediate_or_cancel
+]
+
 let margin_enabled = function
 | "BTC_XMR"
 | "BTC_ETH"
@@ -47,46 +95,35 @@ let margin_enabled = function
 | "BTC_DOGE" -> true
 | _ -> false
 
-type trade = {
-  ts: Time_ns.t;
-  side: side;
-  price: int; (* in satoshis *)
-  qty: int; (* in satoshis *)
-} [@@deriving sexp]
+module Trade = struct
+  type t = {
+    gid : int option ;
+    id : int ;
+    ts: Time_ns.t ;
+    side: side ;
+    price: float ;
+    qty: float ;
+  } [@@deriving sexp]
 
-let get_tradeID = function
-  | `Null -> None
-  | `Int i -> Some i
-  | `String s -> Option.some @@ Int.of_string s
-  | #Yojson.Safe.json -> invalid_arg "get_tradeID"
-
-let trade_encoding =
-  let open Json_encoding in
-  conv
-    (fun { ts ; side ; price ; qty } ->
-        let price = price // 100_000_000 in
-        let qty = qty // 100_000_000 in
-        let total = price *. qty in
-        (None, Json_repr.to_any `Null,
-         Time_ns.to_string ts, Side.to_string side,
-         Float.to_string price,
-         Float.to_string qty,
-         Float.to_string total))
-    (fun (globalTradeID, tradeID, date, typ, rate, amount, total) ->
-       let tradeID = Json_repr.(any_to_repr (module Yojson) tradeID |> get_tradeID) in
-       let id = Option.value ~default:0 tradeID in
-       let ts = Time_ns.(add (of_string (date ^ "Z")) (Span.of_int_ns id)) in
-       let side = Side.of_string typ in
-       let price = satoshis_of_string rate in
-       let qty = satoshis_of_string amount in
-       { ts ; side ; price ; qty })
-    (obj7
-       (opt "globalTradeID" any_value)
-       (req "tradeID" any_value)
-       (req "date" string)
-       (req "type" string)
-       (req "rate" string)
-       (req "amount" string)
-       (req "total" string))
+  let encoding =
+    let open Json_encoding in
+    conv
+      (fun _ -> (None, "", "", "", "", "", ""))
+      (fun (gid, id, date, typ, rate, amount, total) ->
+         let id = Int.of_string id in
+         let ts = Time_ns.(add (of_string (date ^ "Z")) (Span.of_int_ns id)) in
+         let side = Side.of_string typ in
+         let price = Float.of_string rate in
+         let qty = Float.of_string amount in
+         { gid ; id ; ts ; side ; price ; qty })
+      (obj7
+         (opt "globalTradeID" int)
+         (req "tradeID" string)
+         (req "date" string)
+         (req "type" string)
+         (req "rate" string)
+         (req "amount" string)
+         (req "total" string))
+end
 
 

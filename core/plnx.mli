@@ -1,20 +1,9 @@
 open Core
 
-type ticker = {
-  symbol: string;
-  last: float;
-  ask: float;
-  bid: float;
-  pct_change: float;
-  base_volume: float;
-  quote_volume: float;
-  is_frozen: bool;
-  high24h: float;
-  low24h: float;
-}
+open Bs_devkit
 
 module Side : sig
-  type t = [`Buy | `Sell] [@@deriving sexp]
+  type t = side
 
   val to_string : t -> string
   val of_string : string -> t
@@ -22,13 +11,39 @@ module Side : sig
   val encoding : t Json_encoding.encoding
 end
 
-type trade = {
-  ts: Time_ns.t;
-  side: Side.t;
-  price: int; (** in satoshis **)
-  qty: int; (** in satoshis **)
-} [@@deriving sexp]
+type time_in_force = [
+  | `Fill_or_kill
+  | `Immediate_or_cancel
+]
 
-val trade_encoding : trade Json_encoding.encoding
+module Ticker : sig
+  type t = {
+    symbol: string;
+    last: float;
+    ask: float;
+    bid: float;
+    pct_change: float;
+    base_volume: float;
+    quote_volume: float;
+    is_frozen: bool;
+    high24h: float;
+    low24h: float;
+  }
 
-val get_tradeID : Yojson.Safe.json -> int option
+  val encoding : symbol:string -> t Json_encoding.encoding
+end
+
+module Trade : sig
+  type t = {
+    gid : int option ;
+    id : int ;
+    ts : Time_ns.t ;
+    side : Side.t ;
+    price : float ;
+    qty : float ;
+  } [@@deriving sexp]
+
+  val encoding : t Json_encoding.encoding
+end
+
+val margin_enabled : string -> bool

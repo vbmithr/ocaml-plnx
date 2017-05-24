@@ -18,7 +18,8 @@ module Yojson_encoding = Json_encoding.Make(Json_repr.Yojson)
       | Client of string
       | Server of string
       | Poloniex of string
-      | Data_encoding of Yojson.Safe.json
+      | Data_encoding of string
+      | Data_shape of string
 
     let poloniex_str msg = Poloniex msg
     let poloniex k =
@@ -29,107 +30,74 @@ module Yojson_encoding = Json_encoding.Make(Json_repr.Yojson)
     let poloniex_failf k =
       Format.kasprintf (fun msg -> Result.fail (Poloniex msg)) k
 
-    let data_encoding json = Result.fail (Data_encoding json)
+    let data_encoding exn =
+      let msg =
+        Format.asprintf "%a" (Json_encoding.print_error ?print_unknown:None) exn in
+      Result.fail (Data_encoding msg)
+
+    let data_shape msg = Result.fail (Data_shape msg)
 
     let to_string = function
       | Cohttp exn -> Exn.to_string exn
       | Client msg -> "HTTP Client error: " ^ msg
       | Server msg -> "HTTP Server error: " ^ msg
       | Poloniex msg -> "Poloniex error: " ^ msg
-      | Data_encoding json -> "Data encoding error: " ^ (Yojson.Safe.to_string json)
+      | Data_encoding msg -> "Data encoding error: " ^ msg
+      | Data_shape msg -> "Data_shape error: " ^ msg
   end
 
-  let safe_get ?buf url =
-    Monitor.try_with begin fun () ->
-      Client.get url >>= fun (resp, body) ->
-      let status_code = Cohttp.Code.code_of_status resp.status in
-      Body.to_string body >>| fun body_str ->
-      let body_json = Yojson.Safe.from_string ?buf body_str in
-      if Cohttp.Code.is_client_error status_code then raise (Client body_str)
-      else if Cohttp.Code.is_server_error status_code then raise (Server body_str)
-      else match body_json with
-        | `Assoc ["error", `String msg] -> raise (Poloniex msg)
-        | #Yojson.Safe.json as json -> json
-    end >>| Result.map_error ~f:begin function
-      | Client str -> Http_error.Client str
-      | Server str -> Server str
-      | Poloniex str -> Poloniex str
-      | exn -> Cohttp exn
-    end
+let safe_get ?buf url =
+  let ssl_config = Conduit_async.Ssl.configure ~version:Tlsv1_2 () in
+  Monitor.try_with begin fun () ->
+    Client.get ~ssl_config url >>= fun (resp, body) ->
+    let status_code = Cohttp.Code.code_of_status resp.status in
+    Body.to_string body >>| fun body_str ->
+    let body_json = Yojson.Safe.from_string ?buf body_str in
+    if Cohttp.Code.is_client_error status_code then raise (Client body_str)
+    else if Cohttp.Code.is_server_error status_code then raise (Server body_str)
+    else match body_json with
+      | `Assoc ["error", `String msg] -> raise (Poloniex msg)
+      | #Yojson.Safe.json as json -> json
+  end >>| Result.map_error ~f:begin function
+    | Client str -> Http_error.Client str
+    | Server str -> Server str
+    | Poloniex str -> Poloniex str
+    | exn -> Cohttp exn
+  end
 
-  let safe_post ?buf ~headers ~body url =
-    Monitor.try_with begin fun () ->
-      Client.post ~headers ~body url >>= fun (resp, body) ->
-      let status_code = Cohttp.Code.code_of_status resp.status in
-      Body.to_string body >>| fun body_str ->
-      let body_json = Yojson.Safe.from_string ?buf body_str in
-      if Cohttp.Code.is_client_error status_code then raise (Client body_str)
-      else if Cohttp.Code.is_server_error status_code then raise (Server body_str)
-      else match body_json with
-        | `Assoc ["error", `String msg] -> raise (Poloniex msg)
-        | #Yojson.Safe.json as json -> json
-    end >>| Result.map_error ~f:begin function
-      | Client str -> Http_error.Client str
-      | Server str -> Server str
-      | Poloniex str -> Poloniex str
-      | exn -> Cohttp exn
-    end
+let safe_post ?buf ~headers ~body url =
+  let ssl_config = Conduit_async.Ssl.configure ~version:Tlsv1_2 () in
+  Monitor.try_with begin fun () ->
+    Client.post ~ssl_config ~headers ~body url >>= fun (resp, body) ->
+    let status_code = Cohttp.Code.code_of_status resp.status in
+    Body.to_string body >>| fun body_str ->
+    let body_json = Yojson.Safe.from_string ?buf body_str in
+    if Cohttp.Code.is_client_error status_code then raise (Client body_str)
+    else if Cohttp.Code.is_server_error status_code then raise (Server body_str)
+    else match body_json with
+      | `Assoc ["error", `String msg] -> raise (Poloniex msg)
+      | #Yojson.Safe.json as json -> json
+  end >>| Result.map_error ~f:begin function
+    | Client str -> Http_error.Client str
+    | Server str -> Server str
+    | Poloniex str -> Poloniex str
+    | exn -> Cohttp exn
+  end
 
   let base_url = Uri.of_string "https://poloniex.com/public"
   let trading_url = Uri.of_string "https://poloniex.com/tradingApi"
 
-  let ticker_encoding symbol =
-    let open Json_encoding in
-    conv
-      (fun { symbol; last; ask ; bid ; pct_change ; base_volume ; quote_volume ;
-             is_frozen ; high24h ; low24h } ->
-        let open Float in
-        let last = to_string last in
-        let lowestAsk = to_string ask in
-        let highestBid = to_string bid in
-        let percentChange = to_string pct_change in
-        let baseVolume = to_string base_volume in
-        let quoteVolume = to_string quote_volume in
-        let isFrozen = if is_frozen then "1" else "0" in
-        let high24hr = to_string high24h in
-        let low24hr = to_string low24h in
-        (0, last, lowestAsk, highestBid, percentChange, baseVolume,
-         quoteVolume, isFrozen, high24hr, low24hr))
-      (fun (id, last, lowestAsk, highestBid, percentChange, baseVolume,
-            quoteVolume, isFrozen, high24hr, low24hr) -> {
-          symbol ;
-          last = (Float.of_string last) ;
-          ask = (Float.of_string lowestAsk) ;
-          bid = (Float.of_string highestBid) ;
-          pct_change = (Float.of_string percentChange) ;
-          base_volume = (Float.of_string baseVolume) ;
-          quote_volume = (Float.of_string quoteVolume) ;
-          is_frozen = (match Int.of_string isFrozen with 0 -> false | _ -> true) ;
-          high24h = (Float.of_string high24hr) ;
-          low24h = (Float.of_string high24hr) })
-      (obj10
-         (req "id" int)
-         (req "last" string)
-         (req "lowestAsk" string)
-         (req "highestBid" string)
-         (req "percentChange" string)
-         (req "baseVolume" string)
-         (req "quoteVolume" string)
-         (req "isFrozen" string)
-         (req "high24hr" string)
-         (req "low24hr" string))
-
   let tickers ?buf () =
     let url = Uri.with_query' base_url ["command", "returnTicker"] in
     safe_get ?buf url >>| Result.bind ~f:begin function
-      | `Assoc tickers as json ->
+      | `Assoc tickers ->
         begin try
             Ok (List.rev_map tickers ~f:begin fun (symbol, t) ->
-                Yojson_encoding.destruct (ticker_encoding symbol) t
+                Yojson_encoding.destruct (Ticker.encoding symbol) t
               end)
-          with exn -> Http_error.data_encoding json
+          with exn -> Http_error.data_encoding exn
         end
-      | #Yojson.Safe.json as json -> Http_error.data_encoding json
+      | #Yojson.Safe.json -> Http_error.data_shape "expected object"
     end
 
   let bids_asks_of_yojson side records =
@@ -180,7 +148,7 @@ module Yojson_encoding = Json_encoding.Make(Json_repr.Yojson)
     safe_get url >>| Result.bind ~f:begin fun json ->
       try
         Ok (Yojson_encoding.destruct books_encoding json)
-      with exn -> Http_error.data_encoding json
+      with exn -> Http_error.data_encoding exn
     end
 
   let trades_exn ?log ?start_ts ?end_ts symbol =
@@ -212,7 +180,7 @@ module Yojson_encoding = Json_encoding.Make(Json_repr.Yojson)
         | `Lexeme (`String s) -> decode nb_decoded "" ((name, `String s)::tmp)
         | `Lexeme (`Name name) -> decode nb_decoded name tmp
         | `Lexeme `Oe ->
-          let trade = Yojson_encoding.destruct trade_encoding (`Assoc tmp) in
+          let trade = Yojson_encoding.destruct Trade.encoding (`Assoc tmp) in
           Pipe.write trades_w trade >>= fun () ->
           decode (succ nb_decoded) "" []
         | `Lexeme `Ae -> return (nb_decoded, name, tmp)
@@ -249,7 +217,8 @@ module Yojson_encoding = Json_encoding.Make(Json_repr.Yojson)
     in
     Pipe.create_reader ~close_on_exception:false (inner end_ts)
 
-  type currency = {
+module Currency = struct
+  type t = {
     id: int;
     name: string;
     txFee: string;
@@ -258,9 +227,9 @@ module Yojson_encoding = Json_encoding.Make(Json_repr.Yojson)
     disabled: int;
     delisted: int;
     frozen: int;
-  }
+  } [@@deriving sexp]
 
-  let currency_encoding =
+  let encoding =
     let open Json_encoding in
     conv
       (fun { id ; name ; txFee ; minConf ; depositAddress ;
@@ -274,23 +243,24 @@ module Yojson_encoding = Json_encoding.Make(Json_repr.Yojson)
          (req "name" string)
          (req "txFee" string)
          (req "minConf" int)
-         (opt "depositAddress" string)
+         (req "depositAddress" (option string))
          (req "disabled" int)
          (req "delisted" int)
          (req "frozen" int))
+end
 
-  let currencies ?buf () =
-    let url = Uri.add_query_params' base_url ["command", "returnCurrencies"] in
-    safe_get ?buf url >>| Result.bind ~f:begin function
-      | `Assoc currs as json ->
-        begin try
-            Ok (List.map currs ~f:begin fun (code, obj) ->
-                code, (Yojson_encoding.destruct currency_encoding obj)
-              end)
-          with _ -> Http_error.data_encoding json
-        end
-      | #Yojson.Safe.json -> Result.fail (Http_error.Poloniex "currencies")
-    end
+let currencies ?buf () =
+  let url = Uri.add_query_params' base_url ["command", "returnCurrencies"] in
+  safe_get ?buf url >>| Result.bind ~f:begin function
+    | `Assoc currs ->
+      begin try
+          Ok (List.map currs ~f:begin fun (code, obj) ->
+              code, (Yojson_encoding.destruct Currency.encoding obj)
+            end)
+        with exn -> Http_error.data_encoding exn
+      end
+    | #Yojson.Safe.json -> Result.fail (Http_error.Poloniex "currencies")
+  end
 
   let symbols ?buf () =
     let url =
@@ -318,271 +288,241 @@ module Yojson_encoding = Json_encoding.Make(Json_repr.Yojson)
 
   let sign = make_sign ()
 
-(*   type balance_raw = { *)
-(*     available: string; *)
-(*     onOrders: string; *)
-(*     btcValue: string; *)
-(*   } *)
+module Balance = struct
+  type t = {
+    available: float;
+    on_orders: float;
+    btc_value: float;
+  } [@@deriving sexp]
 
-  type balance = {
-    available: int;
-    on_orders: int;
-    btc_value: int;
-  }
+  let encoding =
+    let open Json_encoding in
+    conv
+      (fun { available ; on_orders ; btc_value } ->
+         Float.(to_string available, to_string on_orders, to_string btc_value))
+      (fun (available, on_orders, btc_value) ->
+         let available = Float.of_string available in
+         let on_orders = Float.of_string on_orders in
+         let btc_value = Float.of_string btc_value in
+         { available ; on_orders ; btc_value })
+      (obj3
+         (req "available" string)
+         (req "onOrders" string)
+         (req "btcValue" string))
+end
 
-(*   let balance_of_balance_raw br = *)
-(*     let on_orders = satoshis_of_string br.onOrders in *)
-(*     let available = satoshis_of_string br.available in *)
-(*     let btc_value = satoshis_of_string br.btcValue in *)
-(*     create_balance ~available ~on_orders ~btc_value () *)
+let balances ?buf ?(all=true) ~key ~secret () =
+  let data = List.filter_opt [
+      Some ("command", ["returnCompleteBalances"]);
+      if all then Some ("account", ["all"]) else None
+    ] in
+  let body, headers = sign ~key ~secret ~data in
+  let body = Body.of_string body in
+  safe_post ?buf ~body ~headers trading_url >>| Result.bind ~f:begin function
+    | `Assoc balances -> begin
+        try
+          Result.return @@
+          List.Assoc.map balances ~f:(Yojson_encoding.destruct Balance.encoding)
+        with exn -> Http_error.data_encoding exn
+      end
+    | #Yojson.Safe.json -> Http_error.poloniex_fail "balances"
+  end
 
-(*   let balances ?buf ?(all=true) ~key ~secret () = *)
-(*     let data = List.filter_opt [ *)
-(*         Some ("command", ["returnCompleteBalances"]); *)
-(*         if all then Some ("account", ["all"]) else None *)
-(*       ] *)
-(*     in *)
-(*     let data_str, headers = sign ~key ~secret ~data in *)
-(*     Monitor.try_with_or_error begin fun () -> *)
-(*       Client.post ~body:(Body.of_string data_str) ~headers trading_uri >>= fun (resp, body) -> *)
-(*       Body.to_string body >>| fun body_str -> *)
-(*       match Yojson.Safe.from_string ?buf body_str with *)
-(*       | `Assoc ["error", `String msg] -> failwith msg *)
-(*       | `Assoc balances -> List.Assoc.map balances ~f:begin fun b -> *)
-(*           b |> balance_raw_of_yojson |> function *)
-(*           | Ok br -> balance_of_balance_raw br *)
-(*           | Error _ -> invalid_argf "balances: %s" body_str () *)
-(*         end *)
-(*       | json -> invalid_argf "balances: %s" body_str () *)
-(*     end *)
+module Account = struct
+  type t =
+    | Exchange
+    | Margin
+    | Lending [@@deriving sexp]
 
-(*   type account = Exchange | Margin | Lending [@@deriving sexp] *)
+  let of_string = function
+    | "exchange" -> Exchange
+    | "margin" -> Margin
+    | "lending" -> Lending
+    | s -> invalid_argf "account_of_string: %s" s ()
 
-(*   let account_of_string = function *)
-(*   | "exchange" -> Exchange *)
-(*   | "margin" -> Margin *)
-(*   | "lending" -> Lending *)
-(*   | s -> invalid_argf "account_of_string: %s" s () *)
+  let to_string = function
+    | Exchange -> "exchange"
+    | Margin -> "margin"
+    | Lending -> "lending"
+end
 
-(*   let string_of_account = function *)
-(*   | Exchange -> "exchange" *)
-(*   | Margin -> "margin" *)
-(*   | Lending -> "lending" *)
+let positive_balances ?buf ~key ~secret () =
+  let data = ["command", ["returnAvailableAccountBalances"]] in
+  let body, headers = sign ~key ~secret ~data in
+  let body = Body.of_string body in
+  safe_post ?buf ~headers ~body trading_url >>| Result.bind ~f:begin function
+    | `Assoc balances -> begin
+        try
+          Result.return @@
+          List.map balances ~f:begin function
+            | account, `Assoc bs ->
+              Account.of_string account, List.Assoc.map bs ~f:begin function
+                | `String bal -> Float.of_string bal
+                | json -> raise Exit
+              end
+            | account, #Yojson.Safe.json -> raise Exit
+          end
+        with exn -> Http_error.data_encoding exn
+      end
+    | #Yojson.Safe.json -> Http_error.data_shape "expected object"
+  end
 
-(*   let positive_balances ?buf ~key ~secret () = *)
-(*     let invarg json = invalid_argf "positive_balances: %s" (Yojson.Safe.to_string ?buf json) () in *)
-(*     let data = ["command", ["returnAvailableAccountBalances"]] in *)
-(*     let data_str, headers = sign ~key ~secret ~data in *)
-(*     Monitor.try_with_or_error begin fun () -> *)
-(*       Client.post ~body:(Body.of_string data_str) ~headers trading_uri >>= fun (resp, body) -> *)
-(*       Body.to_string body >>| fun body_str -> *)
-(*       match Yojson.Safe.from_string ?buf body_str with *)
-(*       | `Assoc ["error", `String msg] -> failwith msg *)
-(*       | `Assoc balances -> List.map balances ~f:begin function *)
-(*         | account, `Assoc bs -> *)
-(*           account_of_string account, List.Assoc.map bs ~f:begin function *)
-(*           | `String bal -> satoshis_of_string bal *)
-(*           | json -> invarg json *)
-(*           end *)
-(*         | account, json -> invarg json *)
-(*         end *)
-(*       | json -> invarg json *)
-(*     end *)
-
-(*   type margin_account_summary_raw = { *)
-(*     totalValue: string; *)
-(*     pl: string; *)
-(*     lendingFees: string; *)
-(*     netValue: string; *)
-(*     totalBorrowedValue: string; *)
-(*     currentMargin: string; *)
-(*   } *)
-
-  type margin_account_summary = {
-    total_value: int ;
-    pl: int ;
-    lending_fees: int ;
-    net_value: int ;
-    total_borrowed_value: int ;
+module MarginAccountSummary = struct
+  type t = {
+    total_value: float ;
+    pl: float ;
+    lending_fees: float ;
+    net_value: float ;
+    total_borrowed_value: float ;
     current_margin: float ;
+  } [@@deriving sexp]
+
+  let empty = {
+    total_value = 0. ;
+    pl = 0. ;
+    lending_fees = 0. ;
+    net_value = 0. ;
+    total_borrowed_value = 0. ;
+    current_margin = 0.
   }
 
-(*   let margin_account_summary_of_raw { totalValue; pl; lendingFees; netValue; *)
-(*                                       totalBorrowedValue; currentMargin } = *)
-(*     let total_value = satoshis_of_string totalValue in *)
-(*     let pl = satoshis_int_of_float_exn @@ Float.of_string pl in *)
-(*     let lending_fees = satoshis_int_of_float_exn @@ Float.of_string lendingFees in *)
-(*     let net_value = satoshis_of_string netValue in *)
-(*     let total_borrowed_value = satoshis_of_string totalBorrowedValue in *)
-(*     let current_margin = Float.of_string currentMargin in *)
-(*     create_margin_account_summary ~total_value ~pl ~lending_fees ~net_value *)
-(*       ~total_borrowed_value ~current_margin () *)
+  let encoding =
+    let open Json_encoding in
+    conv
+      (fun _ -> ("", "", "", "", "", ""))
+      (fun (totalValue, pl, lendingFees, netValue,
+            totalBorrowedValue, currentMargin) ->
+        let total_value = Float.of_string totalValue in
+        let pl = Float.of_string pl in
+        let lending_fees = Float.of_string lendingFees in
+        let net_value = Float.of_string netValue in
+        let total_borrowed_value = Float.of_string totalBorrowedValue in
+        let current_margin = Float.of_string currentMargin in
+        { total_value ; pl ; lending_fees ; net_value ;
+          total_borrowed_value ; current_margin })
+      (obj6
+         (req "totalValue" string)
+         (req "pl" string)
+         (req "lendingFees" string)
+         (req "netValue" string)
+         (req "totalBorrowedValue" string)
+         (req "currentMargin" string))
+end
 
-(*   let margin_account_summary ?buf ~key ~secret () = *)
-(*     let data = ["command", ["returnMarginAccountSummary"]] in *)
-(*     let data_str, headers = sign ~key ~secret ~data in *)
-(*     Monitor.try_with_or_error begin fun () -> *)
-(*       Client.post ~body:(Body.of_string data_str) ~headers trading_uri >>= fun (resp, body) -> *)
-(*       Body.to_string body >>| fun body_str -> *)
-(*       match Yojson.Safe.from_string ?buf body_str |> margin_account_summary_raw_of_yojson with *)
-(*       | Error msg -> failwith body_str *)
-(*       | Ok mas_raw -> margin_account_summary_of_raw mas_raw *)
-(*     end *)
+let margin_account_summary ?buf ~key ~secret () =
+  let data = ["command", ["returnMarginAccountSummary"]] in
+  let body, headers = sign ~key ~secret ~data in
+  let body = Body.of_string body in
+  safe_post ?buf ~body ~headers trading_url >>| Result.bind ~f:begin fun json ->
+    Ok (Yojson_encoding.destruct MarginAccountSummary.encoding json)
+  end
 
-(*   type order_response_raw = { *)
-(*     success: int ; *)
-(*     message: string ; *)
-(*     error: string ; *)
-(*     orderNumber: string ; *)
-(*     resultingTrades: Yojson.Safe.json ; *)
-(*     amountUnfilled: string ; *)
-(*   } *)
+let or_error encoding =
+  let open Json_encoding in
+  let error_encoding =
+    conv
+      (fun _ -> ((), ""))
+      (fun ((), error) -> Http_error.Poloniex error)
+      (merge_objs unit (obj1 (req "error" string))) in
+  union [
+    case error_encoding
+      (function Ok _ -> None | Error msg -> Some msg)
+      (fun msg -> Error msg) ;
+    case encoding
+      (function Ok v -> Some v | Error _ -> None)
+      (fun v -> Ok v)
+  ]
 
-(*   let fix_resultingTrades = function *)
-(*   | `Null -> [] *)
-(*   | `List resulting -> List.map resulting ~f:(fun tr -> trade_raw_of_yojson tr |> Result.ok_or_failwith) *)
-(*   | `Assoc [_, `List resulting] -> List.map resulting ~f:(fun tr -> trade_raw_of_yojson tr |> Result.ok_or_failwith) *)
-(*   | #Ezjsonm.value -> invalid_arg "fix_resultingTrades" *)
+module OrderResponse = struct
+  type t = {
+    id : int ;
+    trades : Trade.t list ;
+    amount_unfilled : float ;
+  } [@@deriving sexp]
 
-(*   type trade_info = { *)
-(*     gid: int option; *)
-(*     id: int; *)
-(*     trade: trade; *)
-(*   } *)
+  let encoding =
+    let open Json_encoding in
+    conv
+      (fun _ -> ((), ("", [], None)))
+      (fun ((), (id, trades, amount_unfilled)) ->
+         let id = Int.of_string id in
+         let amount_unfilled =
+           Option.value_map amount_unfilled ~default:0. ~f:Float.of_string in
+         { id ; trades ; amount_unfilled })
+      (merge_objs unit
+         (obj3
+            (req "orderNumber" string)
+            (dft "resultingTrades" (list Trade.encoding) [])
+            (opt "amountUnfilled" string)))
+end
 
-(*   type order_response = { *)
-(*     id: int; *)
-(*     trades: trade_info list; *)
-(*     amount_unfilled: int; *)
-(*   } *)
+let order ?buf ?tif ?(post_only=false)
+    ~key ~secret ~side ~symbol ~price ~qty () =
+  let data = List.filter_opt [
+      Some ("command", [match side with `Buy -> "buy" | `Sell -> "sell" ]);
+      Some ("currencyPair", [symbol]);
+      Some ("rate", [Float.to_string price]);
+      Some ("amount", [Float.to_string qty]);
+      (match tif with
+       | Some `Fill_or_kill -> Some ("fillOrKill", ["1"])
+       | Some `Immediate_or_cancel -> Some ("immediateOrCancel", ["1"])
+       | _ -> None);
+      (if post_only then Some ("postOnly", ["1"]) else None)
+    ]
+  in
+  let body, headers = sign ~key ~secret ~data in
+  let body = Body.of_string body in
+  safe_post ?buf ~headers ~body trading_url >>|
+  Result.bind ~f:(Yojson_encoding.destruct (or_error OrderResponse.encoding))
 
-(*   (\* let order_response_encoding = *\) *)
-(*   (\*   let open Json_encoding in *\) *)
-(*   (\*   conv *\) *)
-(*   (\*     (fun { id ; trades ; amount_unfilled } -> *\) *)
-(*   (\*        (1, "", "", Int.to_string id, *\) *)
-(*   (\*         Json_repr.to_any (`A []), Int.to_string amount_unfilled)) *\) *)
-(*   (\*     (fun (success) *\) *)
-(*   (\*     (obj6 *\) *)
-(*   (\*        (dft "success" int 1) *\) *)
-(*   (\*        (dft "message" string "") *\) *)
-(*   (\*        (dft "error" string "") *\) *)
-(*   (\*        (dft "orderNumber" string "") *\) *)
-(*   (\*        (opt "resultingTrades" any_value) *\) *)
-(*   (\*        (dft "amountUnfilled" string "")) *\) *)
+let cancel_order ?buf ~key ~secret ~order_id () =
+  let response_encoding = or_error Json_encoding.unit in
+  let data = [
+    "command", ["cancelOrder"];
+    "orderNumber", [Int.to_string order_id];
+  ]
+  in
+  let body, headers = sign ~key ~secret ~data in
+  let body = Body.of_string body in
+  safe_post ?buf ~headers ~body trading_url >>|
+  Result.bind ~f:(Yojson_encoding.destruct response_encoding)
 
-(*   let trade_info_of_resultingTrades tr = *)
-(*     let id = Option.value ~default:0 @@ get_tradeID tr.tradeID in *)
-(*     let gid = get_tradeID tr.globalTradeID in *)
-(*     let trade = trade_of_trade_raw tr in *)
-(*     create_trade_info ?gid ~id ~trade () *)
+let modify_order ?buf ?qty ~key ~secret ~price ~order_id () =
+  let data = List.filter_opt [
+      Some ("command", ["moveOrder"]);
+      Some ("orderNumber", [Int.to_string order_id]);
+      Some ("rate", [Float.to_string price]);
+      Option.map qty ~f:(fun amount -> "amount", [Float.to_string amount])
+    ]
+  in
+  let body, headers = sign ~key ~secret ~data in
+  let body = Body.of_string body in
+  safe_post ?buf ~headers ~body trading_url >>|
+  Result.bind ~f:(Yojson_encoding.destruct (or_error OrderResponse.encoding))
 
-(*   let order_response_of_raw { success; message; error; orderNumber; resultingTrades; amountUnfilled } = *)
-(*     if success = 0 then Result.fail error *)
-(*     else *)
-(*     let id = Int.of_string orderNumber in *)
-(*     let amount_unfilled = if amountUnfilled = "" then 0 else satoshis_of_string amountUnfilled in *)
-(*     let trades = fix_resultingTrades resultingTrades in *)
-(*     let trades = List.map trades ~f:trade_info_of_resultingTrades in *)
-(*     Result.return @@ create_order_response ~id ~trades ~amount_unfilled () *)
-
-(*   let order *)
-(*       ?buf *)
-(*       ?tif *)
-(*       ?(post_only=false) *)
-(*       ~key ~secret ~side ~symbol ~price ~qty () = *)
-(*     let data = List.filter_opt [ *)
-(*         Some ("command", [match side with `Buy -> "buy" | `Sell -> "sell" ]); *)
-(*         Some ("currencyPair", [symbol]); *)
-(*         Some ("rate", [Float.to_string @@ price // 100_000_000]); *)
-(*         Some ("amount", [Float.to_string @@ qty // 100_000_000]); *)
-(*         (match tif with *)
-(*         | Some `Fill_or_kill -> Some ("fillOrKill", ["1"]) *)
-(*         | Some `Immediate_or_cancel -> Some ("immediateOrCancel", ["1"]) *)
-(*         | _ -> None); *)
-(*         (if post_only then Some ("postOnly", ["1"]) else None) *)
-(*       ] *)
-(*     in *)
-(*     let data_str, headers = sign ~key ~secret ~data in *)
-(*     Monitor.try_with_or_error begin fun () -> *)
-(*       Client.post ~body:(Body.of_string data_str) ~headers trading_uri >>= fun (resp, body) -> *)
-(*       Body.to_string body >>| fun body_str -> *)
-(*       Yojson.Safe.from_string ?buf body_str |> function *)
-(*       | `Assoc ["error", `String msg] -> failwith msg (\* OK here! *\) *)
-(*       | resp -> match order_response_raw_of_yojson resp with *)
-(*       | Ok res -> order_response_of_raw res |> Result.ok_or_failwith *)
-(*       | Error _ -> failwith body_str *)
-(*     end *)
-
-(*   type cancel_response_raw = { *)
-(*     success: int ; *)
-(*     amount: string ; *)
-(*     message: string ; *)
-(*     error: string ; *)
-(*   } *)
-
-(*   let cancel ?buf ~key ~secret id = *)
-(*     let data = [ *)
-(*         "command", ["cancelOrder"]; *)
-(*         "orderNumber", [Int.to_string id]; *)
-(*     ] *)
-(*     in *)
-(*     let data_str, headers = sign ~key ~secret ~data in *)
-(*     Monitor.try_with_or_error begin fun () -> *)
-(*       Client.post ~body:(Body.of_string data_str) ~headers trading_uri >>= fun (resp, body) -> *)
-(*       Body.to_string body >>| fun body_str -> *)
-(*       let resp = Yojson.Safe.from_string ?buf body_str in *)
-(*       let resp = cancel_response_raw_of_yojson resp |> Result.ok_or_failwith in *)
-(*       if resp.success = 1 then () else failwith resp.error *)
-(*     end *)
-
-(*   let modify ?buf ?qty ~key ~secret ~price id = *)
-(*     let data = List.filter_opt [ *)
-(*         Some ("command", ["moveOrder"]); *)
-(*         Some ("orderNumber", [Int.to_string id]); *)
-(*         Some ("rate", [price // 100_000_000 |> Float.to_string]); *)
-(*         Option.map qty ~f:(fun a -> "amount", [a // 100_000_000 |> Float.to_string]) *)
-(*       ] *)
-(*     in *)
-(*     let data_str, headers = sign ~key ~secret ~data in *)
-(*     Monitor.try_with_or_error begin fun () -> *)
-(*       Client.post ~body:(Body.of_string data_str) ~headers trading_uri >>= fun (resp, body) -> *)
-(*       Body.to_string body >>| fun body_str -> *)
-(*       Yojson.Safe.from_string ?buf body_str |> function *)
-(*       | resp -> match order_response_raw_of_yojson resp with *)
-(*       | Ok res -> order_response_of_raw res |> Result.ok_or_failwith *)
-(*       | Error _ -> failwith body_str *)
-(*     end *)
-
-(*   let margin_order *)
-(*       ?buf *)
-(*       ?tif *)
-(*       ?(post_only=false) *)
-(*       ?max_lending_rate *)
-(*       ~key ~secret ~side ~symbol ~price ~qty () = *)
-(*     let data = List.filter_opt [ *)
-(*         Some ("command", [match side with `Buy -> "marginBuy" | `Sell -> "marginSell" ]); *)
-(*         Some ("currencyPair", [symbol]); *)
-(*         Some ("rate", [Float.to_string @@ price // 100_000_000]); *)
-(*         Some ("amount", [Float.to_string @@ qty // 100_000_000]); *)
-(*         Option.map max_lending_rate ~f:(fun r -> "lendingRate", [Float.to_string r]); *)
-(*         (match tif with *)
-(*         | Some `Fill_or_kill -> Some ("fillOrKill", ["1"]) *)
-(*         | Some `Immediate_or_cancel -> Some ("immediateOrCancel", ["1"]) *)
-(*         | _ -> None); *)
-(*         (if post_only then Some ("postOnly", ["1"]) else None) *)
-(*       ] *)
-(*     in *)
-(*     let data_str, headers = sign ~key ~secret ~data in *)
-(*     Monitor.try_with_or_error begin fun () -> *)
-(*       Client.post ~body:(Body.of_string data_str) ~headers trading_uri >>= fun (resp, body) -> *)
-(*       Body.to_string body >>| fun body_str -> *)
-(*       Yojson.Safe.from_string ?buf body_str |> function *)
-(*       | `Assoc ["error", `String msg] -> failwith msg (\* OK here! *\) *)
-(*       | json -> match order_response_raw_of_yojson json with *)
-(*       | Ok resp -> order_response_of_raw resp |> Result.ok_or_failwith *)
-(*       | Error _ -> failwith body_str *)
-(*     end *)
+let margin_order
+    ?buf
+    ?tif
+    ?(post_only=false)
+    ?max_lending_rate
+    ~key ~secret ~side ~symbol ~price ~qty () =
+  let data = List.filter_opt [
+      Some ("command", [match side with `Buy -> "marginBuy" | `Sell -> "marginSell" ]);
+      Some ("currencyPair", [symbol]);
+      Some ("rate", [Float.to_string price]);
+      Some ("amount", [Float.to_string qty]);
+      Option.map max_lending_rate ~f:(fun r -> "lendingRate", [Float.to_string r]);
+      (match tif with
+       | Some `Fill_or_kill -> Some ("fillOrKill", ["1"])
+       | Some `Immediate_or_cancel -> Some ("immediateOrCancel", ["1"])
+       | _ -> None);
+      (if post_only then Some ("postOnly", ["1"]) else None)
+    ]
+  in
+  let body, headers = sign ~key ~secret ~data in
+  let body = Body.of_string body in
+  safe_post ?buf ~headers ~body trading_url >>|
+  Result.bind ~f:(Yojson_encoding.destruct (or_error OrderResponse.encoding))
 
 (*   let close_position ?buf ~key ~secret symbol = *)
 (*     let data = [ *)
@@ -600,82 +540,70 @@ module Yojson_encoding = Json_encoding.Make(Json_repr.Yojson)
 (*       | Error _ -> failwith body_str *)
 (*     end *)
 
-(*   type open_orders_resp_raw = { *)
-(*     orderNumber: string; *)
-(*     typ: string ; *)
-(*     rate: string; *)
-(*     startingAmount: string; *)
-(*     amount: string; *)
-(*     total: string; *)
-(*     date: string; *)
-(*     margin: int; *)
-(*   } *)
-
 module OpenOrders = struct
   module T = struct
     type t = {
-      id: int;
-      ts: Time_ns.t;
-      side: side;
-      price: int;
-      starting_qty: int;
-      qty: int;
-      margin: int;
+      id: int ;
+      ts: Time_ns.t ;
+      side: side ;
+      price: float ;
+      starting_qty: float ;
+      qty: float ;
+      margin: int ;
     } [@@deriving sexp]
 
     let compare t t' = Int.compare t.id t'.id
   end
   include T
   module Set = Set.Make(T)
+
+  let encoding =
+    let open Json_encoding in
+    conv
+      (fun { id ; ts ; side ; price ; starting_qty ; qty ; margin } ->
+         ("", "", "", "", "", "", "", 0))
+      (fun (orderNumber, typ, rate, startingAmount, amount, total, date, margin) ->
+         let id = Int.of_string orderNumber in
+         let side = Side.of_string typ in
+         let price = Float.of_string rate in
+         let qty = Float.of_string amount in
+         let starting_qty = Float.of_string startingAmount in
+         let ts = Time_ns.of_string (date ^ "Z") in
+         let margin = margin in
+         { id ; ts ; side ; price ; starting_qty ; qty ; margin })
+      (obj8
+         (req "orderNumber" string)
+         (req "type" string)
+         (req "rate" string)
+         (req "startingAmount" string)
+         (req "amount" string)
+         (req "total" string)
+         (req "date" string)
+         (req "margin" int))
 end
 
-(*   let side_of_string = function *)
-(*   | "buy" -> `Buy *)
-(*   | "sell" -> `Sell *)
-(*   | _ -> invalid_arg "side_of_string" *)
-
-(*   let oo_of_oo_raw oo_raw = *)
-(*     let id = Int.of_string oo_raw.orderNumber in *)
-(*     let side = side_of_string oo_raw.typ in *)
-(*     let price = satoshis_of_string oo_raw.rate in *)
-(*     let qty = satoshis_of_string oo_raw.amount in *)
-(*     let starting_qty = satoshis_of_string oo_raw.startingAmount in *)
-(*     let ts = Time_ns.of_string (oo_raw.date ^ "Z") in *)
-(*     let margin = oo_raw.margin in *)
-(*     create_open_orders_resp ~id ~ts ~side ~price ~qty ~starting_qty ~margin () *)
-
-(*   let open_orders ?buf ?(symbol="all") ~key ~secret () = *)
-(*     let data = [ *)
-(*       "command", ["returnOpenOrders"]; *)
-(*       "currencyPair", [symbol]; *)
-(*     ] *)
-(*     in *)
-(*     let data_str, headers = sign ~key ~secret ~data in *)
-(*     let map_f oo = oo |> open_orders_resp_raw_of_yojson |> Result.ok_or_failwith |> oo_of_oo_raw in *)
-(*     Monitor.try_with_or_error begin fun () -> *)
-(*       Client.post ~body:(Body.of_string data_str) ~headers trading_uri >>= fun (resp, body) -> *)
-(*       Body.to_string body >>| fun body_str -> *)
-(*       Yojson.Safe.from_string ?buf body_str |> function *)
-(*       | `Assoc ["error", `String msg] -> failwith msg *)
-(*       | `List oos -> *)
-(*         [symbol, List.map oos ~f:map_f] *)
-(*       | `Assoc oo_assoc -> *)
-(*         List.Assoc.map oo_assoc ~f:(function `List oos -> List.map oos ~f:map_f | #Yojson.Safe.json -> failwith body_str) *)
-(*       | #Yojson.Safe.json -> failwith body_str *)
-(*     end *)
-
-  (* type trade_history_raw = { *)
-  (*   globalTradeID: int; *)
-  (*   tradeID: string; *)
-  (*   date: string; *)
-  (*   rate: string; *)
-  (*   amount: string; *)
-  (*   total: string; *)
-  (*   fee: string; *)
-  (*   orderNumber: string; *)
-  (*   typ: string ; *)
-  (*   category: string; *)
-  (* } *)
+let open_orders ?buf ?(symbol="all") ~key ~secret () =
+  let data = [
+    "command", ["returnOpenOrders"];
+    "currencyPair", [symbol];
+  ] in
+  let body, headers = sign ~key ~secret ~data in
+  let body = Body.of_string body in
+  let map_f = Yojson_encoding.destruct OpenOrders.encoding in
+  safe_post ?buf ~headers ~body trading_url >>| Result.bind ~f:begin function
+    | `List oos ->
+      Result.return [symbol, List.map oos ~f:map_f]
+    | `Assoc oo_assoc -> begin
+        try
+          Result.return @@
+          List.Assoc.map oo_assoc ~f:begin function
+            | `List oos -> List.map oos ~f:map_f
+            | #Yojson.Safe.json -> raise Exit
+          end
+        with exn -> Http_error.data_encoding exn
+      end
+    | #Yojson.Safe.json -> Http_error.data_shape "expected object"
+  end
 
 module TradeHistory = struct
   type trade_category =
@@ -683,20 +611,20 @@ module TradeHistory = struct
     | Margin
     | Settlement [@@deriving sexp]
 
-(*   let trade_category_of_string = function *)
-(*   | "exchange" -> Exchange *)
-(*   | "marginTrade" -> Margin *)
-(*   | "settlement" -> Settlement *)
-(*   | s -> invalid_argf "trade_category_of_string: %s" s () *)
+  let trade_category_of_string = function
+  | "exchange" -> Exchange
+  | "marginTrade" -> Margin
+  | "settlement" -> Settlement
+  | s -> invalid_argf "trade_category_of_string: %s" s ()
 
   module T = struct
     type t = {
       gid: int;
       id: int;
       ts: Time_ns.t;
-      price: int;
-      qty: int;
-      fee: int;
+      price: float ;
+      qty: float ;
+      fee: float ;
       order_id: int;
       side: side;
       category: trade_category
@@ -706,70 +634,93 @@ module TradeHistory = struct
   end
   include T
   module Set = Set.Make(T)
+
+  let encoding =
+    let open Json_encoding in
+    conv
+      (fun _ -> (0, "", "", "", "", "", "", "", "", ""))
+      (fun (globalTradeID, tradeID, date, rate, amount,
+            total, fee, orderNumber, typ, category) ->
+        let id = Int.of_string tradeID in
+        let ts = Time_ns.of_string @@ date ^ "Z" in
+        let price = Float.of_string rate in
+        let qty = Float.of_string amount in
+        let fee = Float.of_string fee in
+        let order_id = Int.of_string orderNumber in
+        let side = Side.of_string typ in
+        let category = trade_category_of_string category in
+        { gid = globalTradeID ; id ; ts ; price ; qty ; fee ; order_id ; side ; category })
+      (obj10
+         (req "globalTradeID" int)
+         (req "tradeID" string)
+         (req "date" string)
+         (req "rate" string)
+         (req "amount" string)
+         (req "total" string)
+         (req "fee" string)
+         (req "orderNumber" string)
+         (req "type" string)
+         (req "category" string))
 end
 
-(*   let trade_history_of_raw { globalTradeID; tradeID; date; rate; amount; total; fee; orderNumber; *)
-(*                              typ; category } = *)
-(*     let id = Int.of_string tradeID in *)
-(*     let ts = Time_ns.of_string @@ date ^ "Z" in *)
-(*     let price = satoshis_of_string rate in *)
-(*     let qty = satoshis_of_string amount in *)
-(*     let fee = satoshis_of_string fee in *)
-(*     let order_id = Int.of_string orderNumber in *)
-(*     let side = side_of_string typ in *)
-(*     let category = trade_category_of_string category in *)
-(*     create_trade_history ~gid:globalTradeID ~id ~ts ~price ~qty ~fee ~order_id ~side ~category () *)
-
-(*   let trade_history ?buf ?(symbol="all") ?start ?stop ~key ~secret () = *)
-(*     let data = List.filter_opt [ *)
-(*         Some ("command", ["returnTradeHistory"]); *)
-(*         Some ("currencyPair", [symbol]); *)
-(*         Option.map start ~f:(fun ts -> "start", [Int.to_string @@ Time_ns.to_int_ns_since_epoch ts / 1_000_000_000]); *)
-(*         Option.map stop ~f:(fun ts -> "end", [Int.to_string @@ Time_ns.to_int_ns_since_epoch ts / 1_000_000_000]); *)
-(*     ] *)
-(*     in *)
-(*     let data_str, headers = sign ~key ~secret ~data in *)
-(*     let map_f oo = oo |> trade_history_raw_of_yojson |> Result.ok_or_failwith |> trade_history_of_raw in *)
-(*     Monitor.try_with_or_error begin fun () -> *)
-(*       Client.post ~body:(Body.of_string data_str) ~headers trading_uri >>= fun (resp, body) -> *)
-(*       Body.to_string body >>| fun body_str -> *)
-(*       Yojson.Safe.from_string ?buf body_str |> function *)
-(*       | `Assoc ["error", `String msg] -> failwith msg *)
-(*       | `List ths -> *)
-(*         [symbol, List.map ths ~f:map_f] *)
-(*       | `Assoc oo_assoc -> *)
-(*         List.Assoc.map oo_assoc ~f:(function `List oos -> List.map oos ~f:map_f | #Yojson.Safe.json -> failwith body_str) *)
-(*       | #Yojson.Safe.json -> failwith body_str *)
-(*     end *)
-
-(*   type margin_position_raw = { *)
-(*     amount: string; *)
-(*     total: string; *)
-(*     basePrice: string; *)
-(*     liquidationPrice: Yojson.Safe.json; *)
-(*     pl: string; *)
-(*     lendingFees: string; *)
-(*     typ: string ; *)
-(*   } *)
+let trade_history ?buf ?(symbol="all") ?start ?stop ~key ~secret () =
+  let data = List.filter_opt [
+      Some ("command", ["returnTradeHistory"]);
+      Some ("currencyPair", [symbol]);
+      Option.map start ~f:begin fun ts ->
+        "start", [Int.to_string @@ Time_ns.to_int_ns_since_epoch ts / 1_000_000_000]
+      end ;
+      Option.map stop ~f:begin fun ts ->
+        "end", [Int.to_string @@ Time_ns.to_int_ns_since_epoch ts / 1_000_000_000]
+      end ;
+    ]
+  in
+  let body, headers = sign ~key ~secret ~data in
+  let body = Body.of_string body in
+  let map_f = Yojson_encoding.destruct TradeHistory.encoding in
+  safe_post ?buf ~headers ~body trading_url >>| Result.bind ~f:begin function
+    | `List ths -> Result.return @@ [symbol, List.map ths ~f:map_f]
+    | `Assoc oo_assoc ->
+      begin
+        try
+          Result.return @@ List.Assoc.map oo_assoc ~f:begin function
+            | `List oos -> List.map oos ~f:map_f
+            | #Yojson.Safe.json -> raise Exit
+          end
+        with exn -> Http_error.data_encoding exn
+      end
+    | #Yojson.Safe.json -> Http_error.data_shape "expected object"
+  end
 
 module MarginPosition = struct
-  type position = {
-    price: float ;
-    qty: float ;
-    total: float ;
-    pl: float ;
-    lending_fees: float ;
-    liquidation_price: float option ;
-    side: side ;
-  }
+  module T = struct
+    type position = {
+      price: float ;
+      qty: float ;
+      total: float ;
+      pl: float ;
+      lending_fees: float ;
+      liquidation_price: float option ;
+      side: side ;
+    } [@@deriving sexp]
 
-  type t = {
-    symbol: string ;
-    position : position ;
-  }
+    type t = {
+      symbol: string ;
+      position : position ;
+    } [@@deriving sexp]
 
-  let create ~symbol ~position = { symbol ; position }
-  let compare t t' = Pervasives.compare t t'
+    let create ~symbol ~position = { symbol ; position }
+    let compare t t' = Pervasives.compare t t'
+  end
+  include T
+  module Set = Set.Make(T)
+
+  let (side_encoding : Side.t Json_encoding.encoding) =
+    let open Json_encoding in
+    string_enum [
+      "long", `Buy ;
+      "short", `Sell ;
+    ]
 
   let position_encoding =
     let open Json_encoding in
@@ -779,39 +730,22 @@ module MarginPosition = struct
       (fun (price, qty, total, pl, lending_fees, liquidation_price, side) ->
          { price ; qty ; total ; pl ; lending_fees ; liquidation_price ; side })
       (obj7
-         (req "price" float)
-         (req "qty" float)
+         (req "basePrice" float)
+         (req "amount" float)
          (req "total" float)
          (req "pl" float)
-         (req "lending_fees" float)
-         (opt "liquidation_price" float)
-         (req "side" Side.encoding))
+         (req "lendingFees" float)
+         (opt "liquidationPrice" float)
+         (req "type" side_encoding))
 end
 
 let margin_positions ?buf ?(symbol="all") ~key ~secret () =
   let data = ["command", ["getMarginPosition"]; "currencyPair", [symbol]] in
   let body, headers = sign ~key ~secret ~data in
   let body = Body.of_string body in
-  (*FIXME: should this fail instead of filtering? *)
-  let filter_map_f p =
-    try Some (Yojson_encoding.destruct MarginPosition.position_encoding p) with _ -> None in
+  let map_f = Yojson_encoding.destruct MarginPosition.position_encoding in
   safe_post ?buf ~headers ~body trading_url >>| Result.bind ~f:begin function
-    | `Assoc (("type", _) :: a) as p -> Result.return [symbol, filter_map_f p]
-    | `Assoc ps_assoc -> Result.return @@ List.Assoc.map ps_assoc ~f:filter_map_f
-    | #Yojson.Safe.json as json -> Http_error.data_encoding json
+    | `Assoc (("type", _) :: a) as p -> Result.return [symbol, map_f p]
+    | `Assoc ps_assoc -> Result.return @@ List.Assoc.map ps_assoc ~f:map_f
+    | #Yojson.Safe.json -> Http_error.data_shape "expected object"
   end
-
-(*   let margin_position_of_raw { amount; total; basePrice; liquidationPrice; pl; lendingFees; typ } = *)
-(*     let price = satoshis_of_string basePrice in *)
-(*     let qty = satoshis_int_of_float_exn @@ Float.of_string amount in *)
-(*     let total = satoshis_int_of_float_exn @@ Float.of_string total in *)
-(*     let pl = satoshis_int_of_float_exn @@ Float.of_string pl in *)
-(*     let lending_fees = satoshis_int_of_float_exn @@ Float.of_string lendingFees in *)
-(*     let liquidation_price = match liquidationPrice with *)
-(*     | `String price -> Option.some @@ satoshis_int_of_float_exn @@ Float.of_string price *)
-(*     | #Yojson.Safe.json -> None *)
-(*     in *)
-(*     let side = match typ with | "long" -> Some `Buy | "short" -> Some `Sell | _ -> None in *)
-(*     Option.map side ~f:begin fun side -> *)
-(*       create_margin_position ~side ~price ~qty ~total ~pl ~lending_fees ?liquidation_price () *)
-(*     end *)
