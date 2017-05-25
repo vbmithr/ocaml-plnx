@@ -65,25 +65,14 @@ module OpenOrders : sig
 end
 
 module MarginPosition : sig
-  type position = {
+  type t = {
     price: float;
     qty: float;
     total: float;
     pl: float;
     lending_fees: float;
-    liquidation_price: float option;
     side: Side.t;
   } [@@deriving sexp]
-
-  type t = {
-    symbol : string ;
-    position : position ;
-  } [@@deriving sexp]
-
-  val create : symbol:string -> position:position -> t
-  val compare : t -> t -> int
-
-  module Set : Set.S with type Elt.t = t
 end
 
 module MarginAccountSummary : sig
@@ -139,9 +128,9 @@ val tickers :
   (Ticker.t list, Http_error.t) Result.t Deferred.t
 
 val margin_positions :
-  ?buf:Bi_outbuf.t -> ?symbol:string ->
+  ?log:Log.t -> ?buf:Bi_outbuf.t ->
   key:string -> secret:Cstruct.t -> unit ->
-  ((string * MarginPosition.position) list, Http_error.t) Result.t Deferred.t
+  ((string * MarginPosition.t option) list, Http_error.t) Result.t Deferred.t
 
 val margin_account_summary :
   ?buf:Bi_outbuf.t ->

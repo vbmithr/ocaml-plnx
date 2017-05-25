@@ -126,4 +126,4 @@ module Trade = struct
          (req "total" string))
 end
 
-
+let flstring = Json_encoding.(Float.(conv to_string of_string string))

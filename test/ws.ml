@@ -24,16 +24,20 @@ let base_spec =
   +> anon (sequence ("topic" %: string))
 
 let plnx key secret topics =
+  let dft_log = Lazy.force log in
   let process_user_cmd () =
     let process s =
       match String.split s ~on:' ' with
       | ["positions"] ->
-        Rest.margin_positions ~key ~secret () >>| begin function
+        Rest.margin_positions ~log:dft_log ~key ~secret () >>| begin function
         | Error err -> error "%s" @@ Rest.Http_error.to_string err
         | Ok resp ->
           let nb_nonempty = List.fold_left resp ~init:0 ~f:begin fun i (symbol, p) ->
               info "%s: %s" symbol
-                (Rest.MarginPosition.sexp_of_position p |> Sexplib.Sexp.to_string);
+                (Option.value_map p
+                   ~default:"No position"
+                   ~f:(fun p -> Rest.MarginPosition.sexp_of_t p |>
+                                Sexplib.Sexp.to_string));
               succ i
             end
           in

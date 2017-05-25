@@ -4,7 +4,12 @@ open Async
 open Bs_devkit
 open Plnx
 
-let open_connection ?(heartbeat=Time_ns.Span.of_int_sec 25) ?log_ws ?log to_ws =
+let open_connection
+    ?(heartbeat=Time_ns.Span.of_int_sec 25)
+    ?log_ws
+    ?log
+    ?disconnected
+    to_ws =
   let uri_str = "https://api.poloniex.com" in
   let uri = Uri.of_string uri_str in
   let host = Option.value_exn ~message:"no host in uri" Uri.(host uri) in
@@ -99,6 +104,10 @@ let open_connection ?(heartbeat=Time_ns.Span.of_int_sec 25) ?log_ws ?log to_ws =
   end >>= fun () ->
     if Pipe.is_closed client_r then Deferred.unit
     else begin
+      begin match disconnected with
+        | None -> Deferred.unit
+        | Some p -> Pipe.write_if_open p ()
+      end >>= fun () ->
       Option.iter log ~f:(fun log ->
           Log.error log "[WS] restarting connection to %s" uri_str);
       Clock_ns.after @@ Time_ns.Span.of_int_sec 10 >>=

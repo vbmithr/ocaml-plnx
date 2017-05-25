@@ -25,5 +25,6 @@ val open_connection :
   ?heartbeat:Time_ns.Span.t ->
   ?log_ws:Log.t ->
   ?log:Log.t ->
+  ?disconnected:unit Pipe.Writer.t ->
   Msgpck.t Wamp.msg Pipe.Reader.t ->
   Msgpck.t Wamp.msg Pipe.Reader.t

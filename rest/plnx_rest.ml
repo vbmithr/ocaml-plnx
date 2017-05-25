@@ -6,45 +6,45 @@ open Plnx
 
 module Yojson_encoding = Json_encoding.Make(Json_repr.Yojson)
 
-  open Cohttp_async
+open Cohttp_async
 
-  exception Client of string
-  exception Server of string
-  exception Poloniex of string
+exception Client of string
+exception Server of string
+exception Poloniex of string
 
-  module Http_error = struct
-    type t =
-      | Cohttp of exn
-      | Client of string
-      | Server of string
-      | Poloniex of string
-      | Data_encoding of string
-      | Data_shape of string
+module Http_error = struct
+  type t =
+    | Cohttp of exn
+    | Client of string
+    | Server of string
+    | Poloniex of string
+    | Data_encoding of string
+    | Data_shape of string
 
-    let poloniex_str msg = Poloniex msg
-    let poloniex k =
-      Format.kasprintf (fun msg -> Poloniex msg) k
+  let poloniex_str msg = Poloniex msg
+  let poloniex k =
+    Format.kasprintf (fun msg -> Poloniex msg) k
 
-    let poloniex_fail msg = Result.fail (Poloniex msg)
+  let poloniex_fail msg = Result.fail (Poloniex msg)
 
-    let poloniex_failf k =
-      Format.kasprintf (fun msg -> Result.fail (Poloniex msg)) k
+  let poloniex_failf k =
+    Format.kasprintf (fun msg -> Result.fail (Poloniex msg)) k
 
-    let data_encoding exn =
-      let msg =
-        Format.asprintf "%a" (Json_encoding.print_error ?print_unknown:None) exn in
-      Result.fail (Data_encoding msg)
+  let data_encoding exn =
+    let msg =
+      Format.asprintf "%a" (Json_encoding.print_error ?print_unknown:None) exn in
+    Result.fail (Data_encoding msg)
 
-    let data_shape msg = Result.fail (Data_shape msg)
+  let data_shape msg = Result.fail (Data_shape msg)
 
-    let to_string = function
-      | Cohttp exn -> Exn.to_string exn
-      | Client msg -> "HTTP Client error: " ^ msg
-      | Server msg -> "HTTP Server error: " ^ msg
-      | Poloniex msg -> "Poloniex error: " ^ msg
-      | Data_encoding msg -> "Data encoding error: " ^ msg
-      | Data_shape msg -> "Data_shape error: " ^ msg
-  end
+  let to_string = function
+    | Cohttp exn -> Exn.to_string exn
+    | Client msg -> "HTTP Client error: " ^ msg
+    | Server msg -> "HTTP Server error: " ^ msg
+    | Poloniex msg -> "Poloniex error: " ^ msg
+    | Data_encoding msg -> "Data encoding error: " ^ msg
+    | Data_shape msg -> "Data_shape error: " ^ msg
+end
 
 let safe_get ?buf url =
   let ssl_config = Conduit_async.Ssl.configure ~version:Tlsv1_2 () in
@@ -65,12 +65,32 @@ let safe_get ?buf url =
     | exn -> Cohttp exn
   end
 
-let safe_post ?buf ~headers ~body url =
+let make_sign () =
+  let bigbuf = Bigstring.create 1024 in
+  fun ~key ~secret ~data ->
+    let nonce = Time_ns.(now () |> to_int_ns_since_epoch) / 1_000 in
+    let data = ("nonce", [Int.to_string nonce]) :: data in
+    let data_str = Uri.encoded_of_query data in
+    let prehash = Cstruct.of_string ~allocator:(fun len -> Cstruct.of_bigarray bigbuf ~len) data_str in
+    let `Hex signature = Nocrypto.Hash.SHA512.hmac ~key:secret prehash |> Hex.of_cstruct in
+    data_str,
+    Cohttp.Header.of_list [
+      "content-type", "application/x-www-form-urlencoded";
+      "Key", key;
+      "Sign", signature;
+    ]
+
+let sign = make_sign ()
+
+let safe_post ?buf ?log ~key ~secret ~data url =
+  let body, headers = sign ~key ~secret ~data in
+  let body = Body.of_string body in
   let ssl_config = Conduit_async.Ssl.configure ~version:Tlsv1_2 () in
   Monitor.try_with begin fun () ->
     Client.post ~ssl_config ~headers ~body url >>= fun (resp, body) ->
     let status_code = Cohttp.Code.code_of_status resp.status in
     Body.to_string body >>| fun body_str ->
+    Option.iter log ~f:(fun log -> Log.debug log "%s" body_str) ;
     let body_json = Yojson.Safe.from_string ?buf body_str in
     if Cohttp.Code.is_client_error status_code then raise (Client body_str)
     else if Cohttp.Code.is_server_error status_code then raise (Server body_str)
@@ -262,31 +282,14 @@ let currencies ?buf () =
     | #Yojson.Safe.json -> Result.fail (Http_error.Poloniex "currencies")
   end
 
-  let symbols ?buf () =
-    let url =
-      Uri.with_query' base_url ["command", "returnOrderBook";
-                                "currencyPair", "all"; "depth", "0"] in
-    safe_get ?buf url >>| Result.bind ~f:begin function
-      | `Assoc syms -> Result.return @@ List.rev_map syms ~f:fst
-      | #Yojson.Safe.json -> Http_error.poloniex_fail "symbols"
-    end
-
-  let make_sign () =
-    let bigbuf = Bigstring.create 1024 in
-    fun ~key ~secret ~data ->
-      let nonce = Time_ns.(now () |> to_int_ns_since_epoch) / 1_000 in
-      let data = ("nonce", [Int.to_string nonce]) :: data in
-      let data_str = Uri.encoded_of_query data in
-      let prehash = Cstruct.of_string ~allocator:(fun len -> Cstruct.of_bigarray bigbuf ~len) data_str in
-      let `Hex signature = Nocrypto.Hash.SHA512.hmac ~key:secret prehash |> Hex.of_cstruct in
-      data_str,
-      Cohttp.Header.of_list [
-        "content-type", "application/x-www-form-urlencoded";
-        "Key", key;
-        "Sign", signature;
-      ]
-
-  let sign = make_sign ()
+let symbols ?buf () =
+  let url =
+    Uri.with_query' base_url ["command", "returnOrderBook";
+                              "currencyPair", "all"; "depth", "0"] in
+  safe_get ?buf url >>| Result.bind ~f:begin function
+    | `Assoc syms -> Result.return @@ List.rev_map syms ~f:fst
+    | #Yojson.Safe.json -> Http_error.poloniex_fail "symbols"
+  end
 
 module Balance = struct
   type t = {
@@ -298,17 +301,12 @@ module Balance = struct
   let encoding =
     let open Json_encoding in
     conv
-      (fun { available ; on_orders ; btc_value } ->
-         Float.(to_string available, to_string on_orders, to_string btc_value))
-      (fun (available, on_orders, btc_value) ->
-         let available = Float.of_string available in
-         let on_orders = Float.of_string on_orders in
-         let btc_value = Float.of_string btc_value in
-         { available ; on_orders ; btc_value })
+      (fun _ -> (0., 0., 0.))
+      (fun (available, on_orders, btc_value) -> { available ; on_orders ; btc_value })
       (obj3
-         (req "available" string)
-         (req "onOrders" string)
-         (req "btcValue" string))
+         (req "available" flstring)
+         (req "onOrders" flstring)
+         (req "btcValue" flstring))
 end
 
 let balances ?buf ?(all=true) ~key ~secret () =
@@ -316,9 +314,7 @@ let balances ?buf ?(all=true) ~key ~secret () =
       Some ("command", ["returnCompleteBalances"]);
       if all then Some ("account", ["all"]) else None
     ] in
-  let body, headers = sign ~key ~secret ~data in
-  let body = Body.of_string body in
-  safe_post ?buf ~body ~headers trading_url >>| Result.bind ~f:begin function
+  safe_post ?buf ~key ~secret ~data trading_url >>| Result.bind ~f:begin function
     | `Assoc balances -> begin
         try
           Result.return @@
@@ -348,9 +344,7 @@ end
 
 let positive_balances ?buf ~key ~secret () =
   let data = ["command", ["returnAvailableAccountBalances"]] in
-  let body, headers = sign ~key ~secret ~data in
-  let body = Body.of_string body in
-  safe_post ?buf ~headers ~body trading_url >>| Result.bind ~f:begin function
+  safe_post ?buf ~key ~secret ~data trading_url >>| Result.bind ~f:begin function
     | `Assoc balances -> begin
         try
           Result.return @@
@@ -411,9 +405,7 @@ end
 
 let margin_account_summary ?buf ~key ~secret () =
   let data = ["command", ["returnMarginAccountSummary"]] in
-  let body, headers = sign ~key ~secret ~data in
-  let body = Body.of_string body in
-  safe_post ?buf ~body ~headers trading_url >>| Result.bind ~f:begin fun json ->
+  safe_post ?buf ~key ~secret ~data trading_url >>| Result.bind ~f:begin fun json ->
     Ok (Yojson_encoding.destruct MarginAccountSummary.encoding json)
   end
 
@@ -446,14 +438,13 @@ module OrderResponse = struct
       (fun _ -> ((), ("", [], None)))
       (fun ((), (id, trades, amount_unfilled)) ->
          let id = Int.of_string id in
-         let amount_unfilled =
-           Option.value_map amount_unfilled ~default:0. ~f:Float.of_string in
+         let amount_unfilled =  Option.value amount_unfilled ~default:0. in
          { id ; trades ; amount_unfilled })
       (merge_objs unit
          (obj3
             (req "orderNumber" string)
             (dft "resultingTrades" (list Trade.encoding) [])
-            (opt "amountUnfilled" string)))
+            (opt "amountUnfilled" flstring)))
 end
 
 let order ?buf ?tif ?(post_only=false)
@@ -468,11 +459,8 @@ let order ?buf ?tif ?(post_only=false)
        | Some `Immediate_or_cancel -> Some ("immediateOrCancel", ["1"])
        | _ -> None);
       (if post_only then Some ("postOnly", ["1"]) else None)
-    ]
-  in
-  let body, headers = sign ~key ~secret ~data in
-  let body = Body.of_string body in
-  safe_post ?buf ~headers ~body trading_url >>|
+    ] in
+  safe_post ?buf ~key ~secret ~data trading_url >>|
   Result.bind ~f:(Yojson_encoding.destruct (or_error OrderResponse.encoding))
 
 let cancel_order ?buf ~key ~secret ~order_id () =
@@ -480,11 +468,8 @@ let cancel_order ?buf ~key ~secret ~order_id () =
   let data = [
     "command", ["cancelOrder"];
     "orderNumber", [Int.to_string order_id];
-  ]
-  in
-  let body, headers = sign ~key ~secret ~data in
-  let body = Body.of_string body in
-  safe_post ?buf ~headers ~body trading_url >>|
+  ] in
+  safe_post ?buf ~key ~secret ~data trading_url >>|
   Result.bind ~f:(Yojson_encoding.destruct response_encoding)
 
 let modify_order ?buf ?qty ~key ~secret ~price ~order_id () =
@@ -493,11 +478,8 @@ let modify_order ?buf ?qty ~key ~secret ~price ~order_id () =
       Some ("orderNumber", [Int.to_string order_id]);
       Some ("rate", [Float.to_string price]);
       Option.map qty ~f:(fun amount -> "amount", [Float.to_string amount])
-    ]
-  in
-  let body, headers = sign ~key ~secret ~data in
-  let body = Body.of_string body in
-  safe_post ?buf ~headers ~body trading_url >>|
+    ] in
+  safe_post ?buf ~key ~secret ~data trading_url >>|
   Result.bind ~f:(Yojson_encoding.destruct (or_error OrderResponse.encoding))
 
 let margin_order
@@ -517,11 +499,8 @@ let margin_order
        | Some `Immediate_or_cancel -> Some ("immediateOrCancel", ["1"])
        | _ -> None);
       (if post_only then Some ("postOnly", ["1"]) else None)
-    ]
-  in
-  let body, headers = sign ~key ~secret ~data in
-  let body = Body.of_string body in
-  safe_post ?buf ~headers ~body trading_url >>|
+    ] in
+  safe_post ?buf ~key ~secret ~data trading_url >>|
   Result.bind ~f:(Yojson_encoding.destruct (or_error OrderResponse.encoding))
 
 (*   let close_position ?buf ~key ~secret symbol = *)
@@ -587,10 +566,8 @@ let open_orders ?buf ?(symbol="all") ~key ~secret () =
     "command", ["returnOpenOrders"];
     "currencyPair", [symbol];
   ] in
-  let body, headers = sign ~key ~secret ~data in
-  let body = Body.of_string body in
   let map_f = Yojson_encoding.destruct OpenOrders.encoding in
-  safe_post ?buf ~headers ~body trading_url >>| Result.bind ~f:begin function
+  safe_post ?buf ~key ~secret ~data trading_url >>| Result.bind ~f:begin function
     | `List oos ->
       Result.return [symbol, List.map oos ~f:map_f]
     | `Assoc oo_assoc -> begin
@@ -673,12 +650,9 @@ let trade_history ?buf ?(symbol="all") ?start ?stop ~key ~secret () =
       Option.map stop ~f:begin fun ts ->
         "end", [Int.to_string @@ Time_ns.to_int_ns_since_epoch ts / 1_000_000_000]
       end ;
-    ]
-  in
-  let body, headers = sign ~key ~secret ~data in
-  let body = Body.of_string body in
+    ] in
   let map_f = Yojson_encoding.destruct TradeHistory.encoding in
-  safe_post ?buf ~headers ~body trading_url >>| Result.bind ~f:begin function
+  safe_post ?buf ~key ~secret ~data trading_url >>| Result.bind ~f:begin function
     | `List ths -> Result.return @@ [symbol, List.map ths ~f:map_f]
     | `Assoc oo_assoc ->
       begin
@@ -693,59 +667,50 @@ let trade_history ?buf ?(symbol="all") ?start ?stop ~key ~secret () =
   end
 
 module MarginPosition = struct
-  module T = struct
-    type position = {
-      price: float ;
-      qty: float ;
-      total: float ;
-      pl: float ;
-      lending_fees: float ;
-      liquidation_price: float option ;
-      side: side ;
-    } [@@deriving sexp]
+  type t = {
+    price: float ;
+    qty: float ;
+    total: float ;
+    pl: float ;
+    lending_fees: float ;
+    side: side ;
+  } [@@deriving sexp]
 
-    type t = {
-      symbol: string ;
-      position : position ;
-    } [@@deriving sexp]
+  type side = Long | Short | Flat
 
-    let create ~symbol ~position = { symbol ; position }
-    let compare t t' = Pervasives.compare t t'
-  end
-  include T
-  module Set = Set.Make(T)
-
-  let (side_encoding : Side.t Json_encoding.encoding) =
+  let side_encoding =
     let open Json_encoding in
     string_enum [
-      "long", `Buy ;
-      "short", `Sell ;
+      "long", Long ;
+      "short", Short ;
+      "none", Flat ;
     ]
 
   let position_encoding =
     let open Json_encoding in
     conv
-      (fun { price ; qty ; total ; pl ; lending_fees ; liquidation_price ; side } ->
-         (price, qty, total, pl, lending_fees, liquidation_price, side))
-      (fun (price, qty, total, pl, lending_fees, liquidation_price, side) ->
-         { price ; qty ; total ; pl ; lending_fees ; liquidation_price ; side })
-      (obj7
-         (req "basePrice" float)
-         (req "amount" float)
-         (req "total" float)
-         (req "pl" float)
-         (req "lendingFees" float)
-         (opt "liquidationPrice" float)
-         (req "type" side_encoding))
+      (fun _ -> ((), (0., 0., 0., 0., 0., Flat)))
+      (fun ((), (price, qty, total, pl, lending_fees, side)) ->
+         match side with
+         | Flat -> None
+         | Long ->
+           Some { price ; qty ; total ; pl ; lending_fees ; side = `Buy }
+         | Short ->
+           Some { price ; qty ; total ; pl ; lending_fees ; side = `Sell })
+      (merge_objs unit (obj6
+         (req "basePrice" flstring)
+         (req "amount" flstring)
+         (req "total" flstring)
+         (req "pl" flstring)
+         (req "lendingFees" flstring)
+         (req "type" side_encoding)))
 end
 
-let margin_positions ?buf ?(symbol="all") ~key ~secret () =
-  let data = ["command", ["getMarginPosition"]; "currencyPair", [symbol]] in
-  let body, headers = sign ~key ~secret ~data in
-  let body = Body.of_string body in
-  let map_f = Yojson_encoding.destruct MarginPosition.position_encoding in
-  safe_post ?buf ~headers ~body trading_url >>| Result.bind ~f:begin function
-    | `Assoc (("type", _) :: a) as p -> Result.return [symbol, map_f p]
-    | `Assoc ps_assoc -> Result.return @@ List.Assoc.map ps_assoc ~f:map_f
+let margin_positions ?log ?buf ~key ~secret () =
+  let data = ["command", ["getMarginPosition"]; "currencyPair", ["all"]] in
+  let destruct = Yojson_encoding.destruct MarginPosition.position_encoding in
+  safe_post ?log ?buf ~key ~secret ~data trading_url >>| Result.bind ~f:begin function
+    | `Assoc ps_assoc ->
+      Ok (List.map ps_assoc ~f:(fun (symbol, p) -> symbol, destruct p))
     | #Yojson.Safe.json -> Http_error.data_shape "expected object"
   end

@@ -16,6 +16,8 @@ type time_in_force = [
   | `Immediate_or_cancel
 ]
 
+val flstring : float Json_encoding.encoding
+
 module Ticker : sig
   type t = {
     symbol: string;
