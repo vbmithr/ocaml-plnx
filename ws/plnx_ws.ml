@@ -104,10 +104,7 @@ let open_connection
   end >>= fun () ->
     if Pipe.is_closed client_r then Deferred.unit
     else begin
-      begin match disconnected with
-        | None -> Deferred.unit
-        | Some p -> Pipe.write_if_open p ()
-      end >>= fun () ->
+      Option.iter disconnected ~f:(fun c -> Condition.broadcast c ()) ;
       Option.iter log ~f:(fun log ->
           Log.error log "[WS] restarting connection to %s" uri_str);
       Clock_ns.after @@ Time_ns.Span.of_int_sec 10 >>=
