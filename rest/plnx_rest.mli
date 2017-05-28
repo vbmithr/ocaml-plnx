@@ -1,6 +1,7 @@
 open Core
 open Async
 
+open Bs_devkit
 open Plnx
 
 module Currency : sig
@@ -103,6 +104,15 @@ module OrderResponse : sig
   } [@@deriving sexp]
 end
 
+module Books : sig
+  type t = {
+    asks: DB.book_entry list;
+    bids: DB.book_entry list;
+    isFrozen: bool;
+    seq: int;
+  }
+end
+
 module Http_error : sig
   type t =
     | Cohttp of exn
@@ -126,6 +136,10 @@ val symbols :
 val tickers :
   ?buf:Bi_outbuf.t -> unit ->
   (Ticker.t list, Http_error.t) Result.t Deferred.t
+
+val books :
+  ?buf:Bi_outbuf.t -> ?depth:int -> string ->
+  (Books.t, Http_error.t) Result.t Deferred.t
 
 val margin_positions :
   ?log:Log.t -> ?buf:Bi_outbuf.t ->

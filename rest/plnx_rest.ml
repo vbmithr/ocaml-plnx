@@ -104,45 +104,46 @@ let safe_post ?buf ?log ~key ~secret ~data url =
     | exn -> Cohttp exn
   end
 
-  let base_url = Uri.of_string "https://poloniex.com/public"
-  let trading_url = Uri.of_string "https://poloniex.com/tradingApi"
+let base_url = Uri.of_string "https://poloniex.com/public"
+let trading_url = Uri.of_string "https://poloniex.com/tradingApi"
 
-  let tickers ?buf () =
-    let url = Uri.with_query' base_url ["command", "returnTicker"] in
-    safe_get ?buf url >>| Result.bind ~f:begin function
-      | `Assoc tickers ->
-        begin try
-            Ok (List.rev_map tickers ~f:begin fun (symbol, t) ->
-                Yojson_encoding.destruct (Ticker.encoding symbol) t
-              end)
-          with exn -> Http_error.data_encoding exn
-        end
-      | #Yojson.Safe.json -> Http_error.data_shape "expected object"
-    end
+let tickers ?buf () =
+  let url = Uri.with_query' base_url ["command", "returnTicker"] in
+  safe_get ?buf url >>| Result.bind ~f:begin function
+    | `Assoc tickers ->
+      begin try
+          Ok (List.rev_map tickers ~f:begin fun (symbol, t) ->
+              Yojson_encoding.destruct (Ticker.encoding symbol) t
+            end)
+        with exn -> Http_error.data_encoding exn
+      end
+    | #Yojson.Safe.json -> Http_error.data_shape "expected object"
+  end
 
-  let bids_asks_of_yojson side records =
-    List.map records ~f:(function
+let bids_asks_of_yojson side records =
+  List.map records ~f:(function
       | `List [`String price; `Int qty] ->
         DB.{ side ; price = satoshis_of_string price ; qty = qty * 100_000_000 }
       | `List [`String price; `Float qty] ->
         DB.{ side ; price = satoshis_of_string price ; qty = satoshis_int_of_float_exn qty }
       | #Yojson.Safe.json -> invalid_arg "bids_asks_of_yojson")
 
-  let bids_asks_of_yojson side = function
-    | `List records -> bids_asks_of_yojson side records
-    | #Yojson.Safe.json -> invalid_arg "bids_asks_of_yojson"
+let bids_asks_of_yojson side = function
+  | `List records -> bids_asks_of_yojson side records
+  | #Yojson.Safe.json -> invalid_arg "bids_asks_of_yojson"
 
-  let bids_of_yojson = bids_asks_of_yojson `Buy
-  let asks_of_yojson = bids_asks_of_yojson `Sell
+let bids_of_yojson = bids_asks_of_yojson `Buy
+let asks_of_yojson = bids_asks_of_yojson `Sell
 
-  type books = {
+module Books = struct
+  type t = {
     asks: DB.book_entry list;
     bids: DB.book_entry list;
     isFrozen: bool;
     seq: int;
   }
 
-  let books_encoding =
+  let encoding =
     let open Json_encoding in
     conv
       (fun { asks ; bids ; isFrozen ; seq } ->
@@ -158,84 +159,85 @@ let safe_post ?buf ?log ~key ~secret ~data url =
          (req "bids" any_value)
          (req "isFrozen" bool)
          (req "seq" int))
+end
 
-  let books ?buf ?depth symbol =
-    let url = Uri.with_query' base_url @@ List.filter_opt [
-        Some ("command", "returnOrderBook");
-        Some ("currencyPair", symbol);
-        Option.map depth ~f:(fun lvls -> "depth", Int.to_string lvls);
-      ] in
-    safe_get url >>| Result.bind ~f:begin fun json ->
-      try
-        Ok (Yojson_encoding.destruct books_encoding json)
-      with exn -> Http_error.data_encoding exn
-    end
+let books ?buf ?depth symbol =
+  let url = Uri.with_query' base_url @@ List.filter_opt [
+      Some ("command", "returnOrderBook");
+      Some ("currencyPair", symbol);
+      Option.map depth ~f:(fun lvls -> "depth", Int.to_string lvls);
+    ] in
+  safe_get ?buf url >>| Result.bind ~f:begin fun json ->
+    try
+      Ok (Yojson_encoding.destruct Books.encoding json)
+    with exn -> Http_error.data_encoding exn
+  end
 
-  let trades_exn ?log ?start_ts ?end_ts symbol =
-    let start_ts_sec = Option.map start_ts ~f:begin fun ts ->
-        Time_ns.to_int_ns_since_epoch ts / 1_000_000_000 |> Int.to_string
-      end in
-    let end_ts_sec = Option.map end_ts ~f:begin fun ts ->
-        Time_ns.to_int_ns_since_epoch ts / 1_000_000_000 |> Int.to_string
-      end in
-    let url = Uri.add_query_params' base_url @@ List.filter_opt Option.[
-        some ("command", "returnTradeHistory");
-        some ("currencyPair", symbol);
-        map start_ts_sec ~f:(fun t -> "start", t);
-        map end_ts_sec ~f:(fun t -> "end", t);
-      ]
+let trades_exn ?log ?start_ts ?end_ts symbol =
+  let start_ts_sec = Option.map start_ts ~f:begin fun ts ->
+      Time_ns.to_int_ns_since_epoch ts / 1_000_000_000 |> Int.to_string
+    end in
+  let end_ts_sec = Option.map end_ts ~f:begin fun ts ->
+      Time_ns.to_int_ns_since_epoch ts / 1_000_000_000 |> Int.to_string
+    end in
+  let url = Uri.add_query_params' base_url @@ List.filter_opt Option.[
+      some ("command", "returnTradeHistory");
+      some ("currencyPair", symbol);
+      map start_ts_sec ~f:(fun t -> "start", t);
+      map end_ts_sec ~f:(fun t -> "end", t);
+    ]
+  in
+  let decoder = Jsonm.decoder `Manual in
+  let fold_trades_exn trades_w (nb_decoded, name, tmp) chunk =
+    let chunk_len = String.length chunk in
+    let chunk = Caml.Bytes.unsafe_of_string chunk in
+    Jsonm.Manual.src decoder chunk 0 chunk_len;
+    let rec decode nb_decoded name tmp =
+      match Jsonm.decode decoder with
+      | `Error err ->
+        let err_str = Format.asprintf "%a" Jsonm.pp_error err in
+        Option.iter log ~f:(fun log -> Log.error log "%s" err_str) ;
+        failwith err_str
+      | `Lexeme (`Float f) -> decode nb_decoded "" ((name, `Int (Float.to_int f))::tmp)
+      | `Lexeme (`String s) -> decode nb_decoded "" ((name, `String s)::tmp)
+      | `Lexeme (`Name name) -> decode nb_decoded name tmp
+      | `Lexeme `Oe ->
+        let trade = Yojson_encoding.destruct Trade.encoding (`Assoc tmp) in
+        Pipe.write trades_w trade >>= fun () ->
+        decode (succ nb_decoded) "" []
+      | `Lexeme `Ae -> return (nb_decoded, name, tmp)
+      | `Lexeme #Jsonm.lexeme -> decode nb_decoded name tmp
+      | `Await -> return (nb_decoded, name, tmp)
+      | `End -> return (nb_decoded, name, tmp)
     in
-    let decoder = Jsonm.decoder `Manual in
-    let fold_trades_exn trades_w (nb_decoded, name, tmp) chunk =
-      let chunk_len = String.length chunk in
-      let chunk = Caml.Bytes.unsafe_of_string chunk in
-      Jsonm.Manual.src decoder chunk 0 chunk_len;
-      let rec decode nb_decoded name tmp =
-        match Jsonm.decode decoder with
-        | `Error err ->
-          let err_str = Format.asprintf "%a" Jsonm.pp_error err in
-          Option.iter log ~f:(fun log -> Log.error log "%s" err_str) ;
-          failwith err_str
-        | `Lexeme (`Float f) -> decode nb_decoded "" ((name, `Int (Float.to_int f))::tmp)
-        | `Lexeme (`String s) -> decode nb_decoded "" ((name, `String s)::tmp)
-        | `Lexeme (`Name name) -> decode nb_decoded name tmp
-        | `Lexeme `Oe ->
-          let trade = Yojson_encoding.destruct Trade.encoding (`Assoc tmp) in
-          Pipe.write trades_w trade >>= fun () ->
-          decode (succ nb_decoded) "" []
-        | `Lexeme `Ae -> return (nb_decoded, name, tmp)
-        | `Lexeme #Jsonm.lexeme -> decode nb_decoded name tmp
-        | `Await -> return (nb_decoded, name, tmp)
-        | `End -> return (nb_decoded, name, tmp)
-      in
-      decode nb_decoded name tmp
-    in
-    Option.iter log ~f:(fun log -> Log.debug log "GET %s" (Uri.to_string url)) ;
-    Client.get url >>| fun (resp, body) ->
-    Pipe.create_reader ~close_on_exception:false begin fun w ->
-      let body_pipe = Body.to_pipe body in
-      Deferred.ignore @@ Pipe.fold body_pipe
-        ~init:(0, "", [])
-        ~f:(fold_trades_exn w)
-    end
+    decode nb_decoded name tmp
+  in
+  Option.iter log ~f:(fun log -> Log.debug log "GET %s" (Uri.to_string url)) ;
+  Client.get url >>| fun (resp, body) ->
+  Pipe.create_reader ~close_on_exception:false begin fun w ->
+    let body_pipe = Body.to_pipe body in
+    Deferred.ignore @@ Pipe.fold body_pipe
+      ~init:(0, "", [])
+      ~f:(fold_trades_exn w)
+  end
 
-  let all_trades_exn
-      ?log
-      ?(wait=Time_ns.Span.min_value)
-      ?(start_ts=Time_ns.epoch)
-      ?(end_ts=Time_ns.now ())
-      symbol =
-    let rec inner cur_end_ts w =
-      trades_exn ?log ~end_ts:cur_end_ts symbol >>= fun trades ->
-      let oldest_ts = ref @@ Time_ns.max_value in
-      Pipe.transfer trades w ~f:(fun t -> oldest_ts := t.ts; t) >>= fun () ->
-      if !oldest_ts = Time_ns.max_value || Time_ns.(!oldest_ts < start_ts) then
-        (Pipe.close w; Deferred.unit)
-      else
+let all_trades_exn
+    ?log
+    ?(wait=Time_ns.Span.min_value)
+    ?(start_ts=Time_ns.epoch)
+    ?(end_ts=Time_ns.now ())
+    symbol =
+  let rec inner cur_end_ts w =
+    trades_exn ?log ~end_ts:cur_end_ts symbol >>= fun trades ->
+    let oldest_ts = ref @@ Time_ns.max_value in
+    Pipe.transfer trades w ~f:(fun t -> oldest_ts := t.ts; t) >>= fun () ->
+    if !oldest_ts = Time_ns.max_value || Time_ns.(!oldest_ts < start_ts) then
+      (Pipe.close w; Deferred.unit)
+    else
       Clock_ns.after wait >>= fun () ->
       inner Time_ns.(sub !oldest_ts @@ Span.of_int_sec 1) w
-    in
-    Pipe.create_reader ~close_on_exception:false (inner end_ts)
+  in
+  Pipe.create_reader ~close_on_exception:false (inner end_ts)
 
 module Currency = struct
   type t = {
