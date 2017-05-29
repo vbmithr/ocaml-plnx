@@ -2,7 +2,7 @@ open Core
 open Async
 open Log.Global
 
-open Bs_devkit
+open Plnx
 module Rest = Plnx_rest
 module Ws = Plnx_ws
 
@@ -148,6 +148,8 @@ let plnx key secret topics =
     process_user_cmd ();
     Pipe.transfer' r Writer.(pipe @@ Lazy.force stderr) ~f:transfer_f
   ]
+
+let loglevel_of_int = function 2 -> `Info | 3 -> `Debug | _ -> `Error
 
 let plnx =
   let run cfg loglevel _testnet _md _rest topics =

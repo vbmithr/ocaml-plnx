@@ -1,7 +1,6 @@
 open Core
 open Async
 
-open Bs_devkit
 open Plnx
 
 module Currency : sig
@@ -106,8 +105,8 @@ end
 
 module Books : sig
   type t = {
-    asks: DB.book_entry list;
-    bids: DB.book_entry list;
+    asks: Book.entry list;
+    bids: Book.entry list;
     isFrozen: bool;
     seq: int;
   }

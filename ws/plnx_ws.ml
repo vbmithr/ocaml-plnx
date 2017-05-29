@@ -1,7 +1,6 @@
 open Core
 open Async
 
-open Bs_devkit
 open Plnx
 
 let open_connection
@@ -147,32 +146,32 @@ module M = struct
       let low24h = Float.of_string low24h in
       { Ticker.symbol ; last ; ask ; bid ; pct_change ; base_volume ;
         quote_volume ; is_frozen ; high24h ; low24h }
-    | _ -> invalid_arg "ticker_of_msgpck"
+    | _ -> invalid_arg "read_ticker"
 
   let read_trade msg = try
       let msg = map_of_msgpck msg in
-      let tradeID = String.Map.find_exn msg "tradeID" |> Msgpck.to_string |> Int.of_string in
+      let id = String.Map.find_exn msg "tradeID" |> Msgpck.to_string |> Int.of_string in
       let date = String.Map.find_exn msg "date" |> Msgpck.to_string in
       let side = String.Map.find_exn msg "type" |> Msgpck.to_string in
       let rate = String.Map.find_exn msg "rate" |> Msgpck.to_string in
       let amount = String.Map.find_exn msg "amount" |> Msgpck.to_string in
-      let ts = Time_ns.(add (of_string (date ^ "Z")) @@ Span.of_int_ns tradeID) in
+      let ts = Time_ns.(add (of_string (date ^ "Z")) @@ Span.of_int_ns id) in
       let side = match side with "buy" -> `Buy | "sell" -> `Sell | _ -> invalid_arg "typ_of_string" in
-      let price = satoshis_of_string rate in
-      let qty = satoshis_of_string amount in
-      DB.{ ts ; side ; price ; qty }
-    with _ -> invalid_arg "trade_of_msgpck"
+      let price = Float.of_string rate in
+      let qty = Float.of_string amount in
+      Trade.create ~id ~ts ~side ~price ~qty ()
+    with _ -> invalid_arg "read_trade"
 
   let read_book msg = try
       let msg = map_of_msgpck msg in
       let side = String.Map.find_exn msg "type" |> Msgpck.to_string in
       let price = String.Map.find_exn msg "rate" |> Msgpck.to_string in
       let qty = String.Map.find msg "amount" |> Option.map ~f:Msgpck.to_string in
-      let side = match side with "bid" -> `Buy | "ask" -> `Sell | _ -> invalid_arg "book_of_book_raw" in
-      let price = satoshis_of_string price in
-      let qty = Option.value_map qty ~default:0 ~f:satoshis_of_string in
-      DB.{ side ; price ; qty }
-    with _ -> invalid_arg "book_of_msgpck"
+      let side = Side.of_string side in
+      let price = Float.of_string price in
+      let qty = Option.value_map qty ~default:0. ~f:Float.of_string in
+      Book.create_entry ~side ~price ~qty
+    with _ -> invalid_arg "read_book"
 end
 
 (* module Yojson = struct *)

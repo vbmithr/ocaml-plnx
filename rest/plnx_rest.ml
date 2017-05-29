@@ -1,7 +1,6 @@
 open Core
 open Async
 
-open Bs_devkit
 open Plnx
 
 module Yojson_encoding = Json_encoding.Make(Json_repr.Yojson)
@@ -123,9 +122,9 @@ let tickers ?buf () =
 let bids_asks_of_yojson side records =
   List.map records ~f:(function
       | `List [`String price; `Int qty] ->
-        DB.{ side ; price = satoshis_of_string price ; qty = qty * 100_000_000 }
+        Book.create_entry ~side ~price:(Float.of_string price) ~qty:(Int.to_float qty)
       | `List [`String price; `Float qty] ->
-        DB.{ side ; price = satoshis_of_string price ; qty = satoshis_int_of_float_exn qty }
+        Book.create_entry ~side ~price:(Float.of_string price) ~qty
       | #Yojson.Safe.json -> invalid_arg "bids_asks_of_yojson")
 
 let bids_asks_of_yojson side = function
@@ -137,8 +136,8 @@ let asks_of_yojson = bids_asks_of_yojson `Sell
 
 module Books = struct
   type t = {
-    asks: DB.book_entry list;
-    bids: DB.book_entry list;
+    asks: Book.entry list;
+    bids: Book.entry list;
     isFrozen: bool;
     seq: int;
   }
@@ -526,7 +525,7 @@ module OpenOrders = struct
     type t = {
       id: int ;
       ts: Time_ns.t ;
-      side: side ;
+      side: Side.t ;
       price: float ;
       starting_qty: float ;
       qty: float ;
@@ -605,7 +604,7 @@ module TradeHistory = struct
       qty: float ;
       fee: float ;
       order_id: int;
-      side: side;
+      side: Side.t;
       category: trade_category
     } [@@deriving sexp]
 
@@ -675,7 +674,7 @@ module MarginPosition = struct
     total: float ;
     pl: float ;
     lending_fees: float ;
-    side: side ;
+    side: Side.t ;
   } [@@deriving sexp]
 
   type side = Long | Short | Flat

@@ -3,5 +3,12 @@
   (public_name plnx-rest)
   (modules (plnx_rest))
   (preprocess (pps (ppx_sexp_conv)))
-  (libraries (plnx core async yojson jsonm ocplib-json-typed
-                   bs-devkit cohttp-async nocrypto hex))))
+  (libraries (plnx
+              core
+              async
+              yojson
+              jsonm
+              ocplib-json-typed
+              cohttp-async
+              nocrypto
+              hex))))

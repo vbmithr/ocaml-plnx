@@ -1,7 +1,5 @@
 open Core
 
-open Bs_devkit
-
 module Ticker = struct
   type t = {
     symbol: string;
@@ -59,14 +57,14 @@ module Ticker = struct
 end
 
 module Side = struct
-  type t = side
+  type t = [`Buy | `Sell] [@@deriving sexp]
 
   let to_string = function `Buy -> "buy" | `Sell -> "sell"
 
   let of_string = function
     | "buy" -> `Buy
     | "sell" -> `Sell
-    | _ -> invalid_arg "side_of string"
+    | _ -> invalid_arg "Side.of_string"
 
   let encoding =
     let open Json_encoding in
@@ -100,10 +98,14 @@ module Trade = struct
     gid : int option ;
     id : int ;
     ts: Time_ns.t ;
-    side: side ;
+    side: Side.t ;
     price: float ;
     qty: float ;
   } [@@deriving sexp]
+
+  let create ?gid ~id ~ts ~side ~price ~qty () = {
+    gid ; id ; ts ; side ; price ; qty
+  }
 
   let encoding =
     let open Json_encoding in
@@ -126,4 +128,25 @@ module Trade = struct
          (req "total" string))
 end
 
+module Book = struct
+  type entry = {
+    side : Side.t ;
+    price : float ;
+    qty : float ;
+  } [@@deriving sexp]
+
+  let create_entry ~side ~price ~qty = { side ; price ; qty }
+end
+
 let flstring = Json_encoding.(Float.(conv to_string of_string string))
+
+module Cfg = struct
+  type cfg = {
+    key: string ;
+    secret: string ;
+    passphrase: string [@default ""];
+    quote: (string * int) list [@default []];
+  } [@@deriving sexp]
+
+  type t = (string * cfg) list [@@deriving sexp]
+end

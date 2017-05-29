@@ -1,9 +1,7 @@
 open Core
 
-open Bs_devkit
-
 module Side : sig
-  type t = side
+  type t = [`Buy | `Sell] [@@deriving sexp]
 
   val to_string : t -> string
   val of_string : string -> t
@@ -45,7 +43,32 @@ module Trade : sig
     qty : float ;
   } [@@deriving sexp]
 
+  val create :
+    ?gid:int -> id:int -> ts:Time_ns.t -> side:Side.t ->
+    price:float -> qty:float -> unit -> t
+
   val encoding : t Json_encoding.encoding
 end
 
+module Book : sig
+  type entry = {
+    side : Side.t ;
+    price : float ;
+    qty : float ;
+  } [@@deriving sexp]
+
+  val create_entry : side:Side.t -> price:float -> qty:float -> entry
+end
+
 val margin_enabled : string -> bool
+
+module Cfg : sig
+  type cfg = {
+    key: string ;
+    secret: string ;
+    passphrase: string ;
+    quote: (string * int) list ;
+  } [@@deriving sexp]
+
+  type t = (string * cfg) list [@@deriving sexp]
+end

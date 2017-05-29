@@ -2,15 +2,14 @@ open Core
 open Async
 
 open Plnx
-open Bs_devkit
 
 module M : sig
   val subscribe :
     Msgpck.t Wamp.msg Pipe.Writer.t -> string list -> int list Deferred.t
 
   val read_ticker : Msgpck.t -> Ticker.t
-  val read_trade : Msgpck.t -> DB.trade
-  val read_book : Msgpck.t -> DB.book_entry
+  val read_trade : Msgpck.t -> Trade.t
+  val read_book : Msgpck.t -> Book.entry
 end
 
 type 'a t = {
