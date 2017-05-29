@@ -64,6 +64,8 @@ module Side = struct
   let of_string = function
     | "buy" -> `Buy
     | "sell" -> `Sell
+    | "bid" -> `Buy
+    | "ask" -> `Sell
     | _ -> invalid_arg "Side.of_string"
 
   let encoding =
