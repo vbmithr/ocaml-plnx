@@ -6,11 +6,6 @@
   (libraries (plnx
               core
               async
-              yojson
-              jsonm
-              ocplib-json-typed
-              cohttp-async
-              nocrypto
-              hex
+              cohttp
               wamp-msgpck
               websocket-async))))

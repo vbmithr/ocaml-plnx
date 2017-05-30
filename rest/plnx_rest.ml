@@ -64,22 +64,19 @@ let safe_get ?buf url =
     | exn -> Cohttp exn
   end
 
-let make_sign () =
-  let bigbuf = Bigstring.create 1024 in
-  fun ~key ~secret ~data ->
-    let nonce = Time_ns.(now () |> to_int_ns_since_epoch) / 1_000 in
-    let data = ("nonce", [Int.to_string nonce]) :: data in
-    let data_str = Uri.encoded_of_query data in
-    let prehash = Cstruct.of_string ~allocator:(fun len -> Cstruct.of_bigarray bigbuf ~len) data_str in
-    let `Hex signature = Nocrypto.Hash.SHA512.hmac ~key:secret prehash |> Hex.of_cstruct in
-    data_str,
-    Cohttp.Header.of_list [
-      "content-type", "application/x-www-form-urlencoded";
-      "Key", key;
-      "Sign", signature;
-    ]
+module SHA512 = Rakia.SHA512.Bytes
 
-let sign = make_sign ()
+let sign ~key ~secret ~data =
+  let nonce = Time_ns.(now () |> to_int_ns_since_epoch) / 1_000 in
+  let data = ("nonce", [Int.to_string nonce]) :: data in
+  let prehash = Uri.encoded_of_query data in
+  let signature = SHA512.(to_hex (hmac ~key:secret prehash)) in
+  prehash,
+  Cohttp.Header.of_list [
+    "content-type", "application/x-www-form-urlencoded";
+    "Key", key;
+    "Sign", signature;
+  ]
 
 let safe_post ?buf ?log ~key ~secret ~data url =
   let body, headers = sign ~key ~secret ~data in

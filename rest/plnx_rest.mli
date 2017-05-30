@@ -142,57 +142,57 @@ val books :
 
 val margin_positions :
   ?log:Log.t -> ?buf:Bi_outbuf.t ->
-  key:string -> secret:Cstruct.t -> unit ->
+  key:string -> secret:string -> unit ->
   ((string * MarginPosition.t option) list, Http_error.t) Result.t Deferred.t
 
 val margin_account_summary :
   ?buf:Bi_outbuf.t ->
-  key:string -> secret:Cstruct.t -> unit ->
+  key:string -> secret:string -> unit ->
   (MarginAccountSummary.t, Http_error.t) Result.t Deferred.t
 
 val open_orders :
   ?buf:Bi_outbuf.t -> ?symbol:string ->
-  key:string -> secret:Cstruct.t -> unit ->
+  key:string -> secret:string -> unit ->
   ((string * OpenOrders.t list) list, Http_error.t) Result.t Deferred.t
 
 val trade_history :
   ?buf:Bi_outbuf.t -> ?symbol:string ->
   ?start:Time_ns.t -> ?stop:Time_ns.t ->
-  key:string -> secret:Cstruct.t -> unit ->
+  key:string -> secret:string -> unit ->
   ((string * TradeHistory.t list) list, Http_error.t) Result.t Deferred.t
 
 val positive_balances :
   ?buf:Bi_outbuf.t ->
-  key:string -> secret:Cstruct.t -> unit ->
+  key:string -> secret:string -> unit ->
   ((Account.t * (string * float) list) list, Http_error.t) Result.t Deferred.t
 
 val balances :
   ?buf:Bi_outbuf.t -> ?all:bool ->
-  key:string -> secret:Cstruct.t -> unit ->
+  key:string -> secret:string -> unit ->
   ((string * Balance.t) list, Http_error.t) Result.t Deferred.t
 
 val order :
   ?buf:Bi_outbuf.t -> ?tif:time_in_force -> ?post_only:bool ->
-  key:string -> secret:Cstruct.t ->
+  key:string -> secret:string ->
   side:Side.t -> symbol:string -> price:float -> qty:float -> unit ->
   (OrderResponse.t, Http_error.t) result Deferred.t
 
 val margin_order :
   ?buf:Bi_outbuf.t -> ?tif:time_in_force ->
   ?post_only:bool -> ?max_lending_rate:float ->
-  key:string -> secret:Cstruct.t ->
+  key:string -> secret:string ->
   side:Side.t -> symbol:string -> price:float -> qty:float -> unit ->
   (OrderResponse.t, Http_error.t) result Deferred.t
 
 val cancel_order :
   ?buf:Bi_outbuf.t ->
-  key:string -> secret:Cstruct.t ->
+  key:string -> secret:string ->
   order_id:int -> unit ->
   (unit, Http_error.t) result Deferred.t
 
 val modify_order :
   ?buf:Bi_outbuf.t -> ?qty:float ->
-  key:string -> secret:Cstruct.t ->
+  key:string -> secret:string ->
   price:float -> order_id:int -> unit ->
   (OrderResponse.t, Http_error.t) result Deferred.t
 

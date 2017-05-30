@@ -8,7 +8,6 @@
               async
               yojson
               jsonm
+              digestif.rakia
               ocplib-json-typed
-              cohttp-async
-              nocrypto
-              hex))))
+              cohttp-async))))

@@ -11,7 +11,7 @@ let find_auth cfg exchange =
   let cfg = Sexplib.Sexp.load_sexp_conv_exn cfg Cfg.t_of_sexp in
   let { Cfg.key; secret } =
     List.Assoc.find_exn ~equal:String.equal cfg exchange in
-  key, Cstruct.of_string secret
+  key, secret
 
 let base_spec =
   let open Command.Spec in
