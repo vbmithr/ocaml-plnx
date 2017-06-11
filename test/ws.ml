@@ -132,15 +132,15 @@ let plnx key secret topics =
     loop ()
   in
   let to_ws, to_ws_w = Pipe.create () in
-  let r = Ws.open_connection ~log:(Lazy.force log) to_ws in
+  let r = Ws.M.open_connection ~log:(Lazy.force log) to_ws in
   let transfer_f q =
     Deferred.Queue.filter_map q ~f:begin function
     | Wamp.Welcome _ as msg ->
       Ws.M.subscribe to_ws_w topics >>| fun _req_ids ->
-      msg |> Wamp_msgpck.msg_to_msgpck |> fun msgpck ->
+      msg |> Wamp_msgpck.print |> fun msgpck ->
       Some (Format.asprintf "%a@." Msgpck.pp msgpck)
     | msg ->
-      msg |> Wamp_msgpck.msg_to_msgpck |> fun msgpck ->
+      msg |> Wamp_msgpck.print |> fun msgpck ->
       return (Some (Format.asprintf "%a@." Msgpck.pp msgpck))
     end
   in

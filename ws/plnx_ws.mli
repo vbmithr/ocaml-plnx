@@ -3,27 +3,32 @@ open Async
 
 open Plnx
 
-module M : sig
-  val subscribe :
-    Msgpck.t Wamp.msg Pipe.Writer.t -> string list -> int list Deferred.t
-
-  val read_ticker : Msgpck.t -> Ticker.t
-  val read_trade : Msgpck.t -> Trade.t
-  val read_book : Msgpck.t -> Book.entry
-end
-
-type 'a t = {
+type 'a msg = {
   typ: string ;
   data: 'a;
 }
 
-val to_msgpck : Msgpck.t t -> Msgpck.t
-val of_msgpck : Msgpck.t -> (Msgpck.t t, string) result
+module type S = sig
+  type t
 
-val open_connection :
-  ?heartbeat:Time_ns.Span.t ->
-  ?log_ws:Log.t ->
-  ?log:Log.t ->
-  ?disconnected:unit Condition.t ->
-  Msgpck.t Wamp.msg Pipe.Reader.t ->
-  Msgpck.t Wamp.msg Pipe.Reader.t
+  val open_connection :
+    ?heartbeat:Time_ns.Span.t ->
+    ?log_ws:Log.t ->
+    ?log:Log.t ->
+    ?disconnected:unit Condition.t ->
+    t Wamp.msg Pipe.Reader.t ->
+    t Wamp.msg Pipe.Reader.t
+
+  val subscribe :
+    t Wamp.msg Pipe.Writer.t -> string list -> int list Deferred.t
+
+  val read_ticker : t -> Ticker.t
+  val read_trade : t -> Trade.t
+  val read_book : t -> Book.entry
+
+  val of_msg : t msg -> t
+  val to_msg : t -> (t msg, string) result
+end
+
+module M : S with type t := Msgpck.t
+
