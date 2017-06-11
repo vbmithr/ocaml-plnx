@@ -3,6 +3,30 @@ open Async
 
 open Plnx
 
+let msg_size = Bytes.create 4
+
+let write_wamp outbuf w msg =
+  Buffer.clear outbuf;
+  Buffer.add_bytes outbuf msg_size ;
+  let nb_written = Wamp_msgpck.msg_to_msgpck msg |> Msgpck.StringBuf.write outbuf in
+  let serialized_msg = Buffer.contents outbuf in
+  Binary_packing.pack_unsigned_32_int_big_endian serialized_msg 0 nb_written;
+  (* Option.iter log ~f:(fun log -> Log.debug log "-> %s" (Wamp.sexp_of_msg Msgpck.sexp_of_t msg |> Sexplib.Sexp.to_string)); *)
+  Pipe.write w serialized_msg
+
+let transfer_f log q =
+  let res = Queue.create () in
+  let rec read_loop pos msg_str =
+    if pos < String.length msg_str then
+      let nb_read, msg = Msgpck.String.read ~pos:(pos+4) msg_str in
+      match Wamp_msgpck.msg_of_msgpck msg with
+      | Ok msg -> Queue.enqueue res msg; read_loop (pos+4+nb_read) msg_str
+      | Error msg -> Option.iter log ~f:(fun log -> Log.error log "%s" msg)
+  in
+  Queue.iter q ~f:(read_loop 0);
+  return res
+
+
 let open_connection
     ?(heartbeat=Time_ns.Span.of_int_sec 25)
     ?log_ws
@@ -17,15 +41,6 @@ let open_connection
   let scheme =
     Option.value_exn ~message:"no scheme in uri" Uri.(scheme uri) in
   let outbuf = Buffer.create 4096 in
-  let write_wamp w msg =
-    Buffer.clear outbuf;
-    Buffer.add_bytes outbuf @@ Bytes.create 4;
-    let nb_written = Wamp_msgpck.msg_to_msgpck msg |> Msgpck.StringBuf.write outbuf in
-    let serialized_msg = Buffer.contents outbuf in
-    Binary_packing.pack_unsigned_32_int_big_endian serialized_msg 0 nb_written;
-    (* Option.iter log ~f:(fun log -> Log.debug log "-> %s" (Wamp.sexp_of_msg Msgpck.sexp_of_t msg |> Sexplib.Sexp.to_string)); *)
-    Pipe.write w serialized_msg
-  in
   let rec loop_write mvar msg =
     Mvar.value_available mvar >>= fun () ->
     let w = Mvar.peek_exn mvar in
@@ -34,7 +49,7 @@ let open_connection
       Mvar.take mvar >>= fun _ ->
       loop_write mvar msg
     end
-    else write_wamp w msg
+    else write_wamp outbuf w msg
   in
   let ws_w_mvar = Mvar.create () in
   let ws_w_mvar_ro = Mvar.read_only ws_w_mvar in
@@ -43,25 +58,13 @@ let open_connection
     Pipe.iter ~continue_on_error:true to_ws ~f:(loop_write ws_w_mvar_ro)
   end
     (fun exn -> Option.iter log ~f:(fun log -> Log.error  log "%s" @@ Exn.to_string exn));
-  let transfer_f q =
-    let res = Queue.create () in
-    let rec read_loop pos msg_str =
-      if pos < String.length msg_str then
-        let nb_read, msg = Msgpck.String.read ~pos:(pos+4) msg_str in
-        match Wamp_msgpck.msg_of_msgpck msg with
-        | Ok msg -> Queue.enqueue res msg; read_loop (pos+4+nb_read) msg_str
-        | Error msg -> Option.iter log ~f:(fun log -> Log.error log "%s" msg)
-    in
-    Queue.iter q ~f:(read_loop 0);
-    return res
-  in
   let client_r, client_w = Pipe.create () in
   let process_ws r w =
     (* Initialize *)
     Option.iter log ~f:(fun log -> Log.info log "[WS] connected to %s" uri_str);
     let hello = Wamp_msgpck.(hello (Uri.of_string "realm1") [Subscriber]) in
-    write_wamp w hello >>= fun () ->
-    Pipe.transfer' r client_w transfer_f
+    write_wamp outbuf w hello >>= fun () ->
+    Pipe.transfer' r client_w (transfer_f log)
   in
   let tcp_fun s r w =
     Socket.(setopt s Opt.nodelay true);
