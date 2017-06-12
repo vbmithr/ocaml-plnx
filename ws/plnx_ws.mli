@@ -3,28 +3,31 @@ open Async
 
 open Plnx
 
-type msg =
-  | Ticker of Ticker.t
-  | Trade of Trade.t
-  | BookModify of Book.entry
-  | BookRemove of Book.entry
+module Msg : sig
+  type t =
+    | Ticker of Ticker.t
+    | Trade of Trade.t
+    | BookModify of Book.entry
+    | BookRemove of Book.entry
+
+  val of_element : Wamp.Element.t -> t
+end
 
 module type S = sig
-  type t
+  type repr
+  include Wamp.S with type repr := repr
 
   val open_connection :
     ?heartbeat:Time_ns.Span.t ->
     ?log_ws:Log.t ->
     ?log:Log.t ->
     ?disconnected:unit Condition.t ->
-    t Wamp.msg Pipe.Reader.t ->
-    t Wamp.msg Pipe.Reader.t
+    t Pipe.Reader.t ->
+    t Pipe.Reader.t
 
   val subscribe :
-    t Wamp.msg Pipe.Writer.t -> string list -> int list Deferred.t
-
-  val to_msg : t -> msg
+    t Pipe.Writer.t -> string list -> int list Deferred.t
 end
 
-module M : S with type t := Msgpck.t
-
+module M : S with type repr := Msgpck.t
+module J : S with type repr := Yojson.Safe.json

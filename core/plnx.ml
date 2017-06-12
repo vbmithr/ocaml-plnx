@@ -72,7 +72,9 @@ module Side = struct
     let open Json_encoding in
     string_enum [
       "buy", `Buy ;
+      "bid", `Buy ;
       "sell", `Sell ;
+      "ask", `Sell ;
     ]
 end
 
@@ -138,6 +140,19 @@ module Book = struct
   } [@@deriving sexp]
 
   let create_entry ~side ~price ~qty = { side ; price ; qty }
+
+  let encoding =
+    let open Json_encoding in
+    conv
+      (fun { price ; side ; qty } ->
+         let qty = if qty = 0. then None else Some qty in
+         (price, side, qty))
+      (fun (price, side, qty) ->
+         { price ; side ; qty = Option.value ~default:0. qty })
+      (obj3
+         (req "rate" float)
+         (req "type" Side.encoding)
+         (opt "amount" float))
 end
 
 let flstring = Json_encoding.(Float.(conv to_string of_string string))

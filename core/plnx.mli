@@ -58,6 +58,8 @@ module Book : sig
   } [@@deriving sexp]
 
   val create_entry : side:Side.t -> price:float -> qty:float -> entry
+
+  val encoding : entry Json_encoding.encoding
 end
 
 val margin_enabled : string -> bool

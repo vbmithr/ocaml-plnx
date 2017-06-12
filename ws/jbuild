@@ -8,4 +8,5 @@
               async
               cohttp
               wamp-msgpck
+              wamp-yojson
               websocket-async))))

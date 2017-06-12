@@ -4,31 +4,37 @@ open Async
 open Plnx
 
 module type BACKEND = sig
-  type t
+  type repr
 
-  include Wamp.SERIALIZATION with type t := t
+  include Wamp.S with type repr := repr
+
+  val headers :
+    Cohttp.Header.t
 
   val write :
-    Buffer.t -> string Pipe.Writer.t -> t Wamp.msg -> unit Deferred.t
+    Log.t option -> Buffer.t -> string Pipe.Writer.t -> t -> unit Deferred.t
 
   val transfer :
-    Log.t option -> string Queue.t -> t Wamp.msg Queue.t Deferred.t
+    Log.t option -> string Queue.t -> t Queue.t Deferred.t
 end
 
 module Backend_msgpck = struct
-  type t = Msgpck.t
+  type repr = Msgpck.t
 
   include Wamp_msgpck
 
+  let headers =
+    Cohttp.Header.init_with "Sec-Websocket-Protocol" "wamp.2.msgpack.batched"
+
   let msg_size = Bytes.create 4
 
-  let write outbuf w msg =
+  let write log outbuf w msg =
     Buffer.clear outbuf;
     Buffer.add_bytes outbuf msg_size ;
-    let nb_written = Wamp_msgpck.print msg |> Msgpck.StringBuf.write outbuf in
+    let nb_written = to_repr msg |> Msgpck.StringBuf.write outbuf in
     let serialized_msg = Buffer.contents outbuf in
     Binary_packing.pack_unsigned_32_int_big_endian serialized_msg 0 nb_written;
-    (* Option.iter log ~f:(fun log -> Log.debug log "-> %s" (Wamp.sexp_of_msg Msgpck.sexp_of_t msg |> Sexplib.Sexp.to_string)); *)
+    Option.iter log ~f:(fun log -> Log.debug log "[WS] -> %S" serialized_msg) ;
     Pipe.write w serialized_msg
 
   let transfer log q =
@@ -36,7 +42,7 @@ module Backend_msgpck = struct
     let rec read_loop pos msg_str =
       if pos < String.length msg_str then
         let nb_read, msg = Msgpck.String.read ~pos:(pos+4) msg_str in
-        match Wamp_msgpck.parse msg with
+        match of_repr msg with
         | Ok msg -> Queue.enqueue res msg; read_loop (pos+4+nb_read) msg_str
         | Error msg -> Option.iter log ~f:(fun log -> Log.error log "%s" msg)
     in
@@ -44,7 +50,126 @@ module Backend_msgpck = struct
     return res
 end
 
+module Backend_yojson = struct
+  type repr = Yojson.Safe.json
+
+  include Wamp_yojson
+
+  let headers =
+    Cohttp.Header.init_with "Sec-Websocket-Protocol" "wamp.2.json.batched"
+
+  let write log outbuf w msg =
+    Buffer.clear outbuf ;
+    Buffer.add_string outbuf (to_repr msg |> Yojson.Safe.to_string) ;
+    Buffer.add_char outbuf '\030' ;
+    let contents = Buffer.contents outbuf in
+    Option.iter log ~f:(fun log -> Log.debug log "[WS] -> %S" contents) ;
+    Pipe.write w (Buffer.contents outbuf)
+
+  let transfer log q =
+    let res = Queue.create () in
+    Queue.iter q ~f:begin fun str ->
+      let msgs = String.split str ~on:'\030' in
+      List.iter msgs ~f:begin function
+        | "" -> ()
+        | msg ->
+          Option.iter log ~f:(fun log -> Log.debug log "<- %s" msg) ;
+          match of_repr (Yojson.Safe.from_string msg) with
+          | Ok msg -> Queue.enqueue res msg
+          | Error msg -> Option.iter log ~f:(fun log -> Log.error log "%s" msg)
+      end
+    end ;
+    return res
+end
+
+module Yojson_encoding = Json_encoding.Make(Json_repr.Yojson)
+
+module Msg = struct
+  type t =
+    | Ticker of Ticker.t
+    | Trade of Trade.t
+    | BookModify of Book.entry
+    | BookRemove of Book.entry
+
+  let map_of_dict = function
+    | Wamp.Element.Dict elts ->
+      List.fold_left elts
+        ~init:String.Map.empty ~f:(fun a (k, v) -> String.Map.add a k v)
+    | _ -> invalid_arg "map_of_dict"
+
+  let read_ticker = function
+    | Wamp.Element.List [String symbol; String last; String ask; String bid; String pct_change;
+                   String base_volume; String quote_volume; Int is_frozen; String high24h;
+                   String low24h
+                  ] ->
+      let last = Float.of_string last in
+      let ask = Float.of_string ask in
+      let bid = Float.of_string bid in
+      let pct_change = Float.of_string pct_change in
+      let base_volume = Float.of_string base_volume in
+      let quote_volume = Float.of_string quote_volume in
+      let is_frozen = if is_frozen = 0 then false else true in
+      let high24h = Float.of_string high24h in
+      let low24h = Float.of_string low24h in
+      { Ticker.symbol ; last ; ask ; bid ; pct_change ; base_volume ;
+        quote_volume ; is_frozen ; high24h ; low24h }
+    | _ -> invalid_arg "read_ticker"
+
+  let read_trade msg = try
+      let msg = map_of_dict msg in
+      let id = String.Map.find_exn msg "tradeID" |> Wamp.Element.to_string |> Int.of_string in
+      let date = String.Map.find_exn msg "date" |> Wamp.Element.to_string in
+      let side = String.Map.find_exn msg "type" |> Wamp.Element.to_string in
+      let rate = String.Map.find_exn msg "rate" |> Wamp.Element.to_string in
+      let amount = String.Map.find_exn msg "amount" |> Wamp.Element.to_string in
+      let ts = Time_ns.(add (of_string (date ^ "Z")) @@ Span.of_int_ns id) in
+      let side = match side with "buy" -> `Buy | "sell" -> `Sell | _ -> invalid_arg "typ_of_string" in
+      let price = Float.of_string rate in
+      let qty = Float.of_string amount in
+      Trade.create ~id ~ts ~side ~price ~qty ()
+    with _ -> invalid_arg "read_trade"
+
+  let read_book msg = try
+      let msg = map_of_dict msg in
+      let side = String.Map.find_exn msg "type" |> Wamp.Element.to_string in
+      let price = String.Map.find_exn msg "rate" |> Wamp.Element.to_string in
+      let qty = String.Map.find msg "amount" |> Option.map ~f:Wamp.Element.to_string in
+      let side = Side.of_string side in
+      let price = Float.of_string price in
+      let qty = Option.value_map qty ~default:0. ~f:Float.of_string in
+      Book.create_entry ~side ~price ~qty
+    with _ -> invalid_arg "read_book"
+
+  let of_element e =
+    try
+      let elts = map_of_dict e in
+      let typ = String.Map.find_exn elts "type" |> Wamp.Element.to_string in
+      let data = String.Map.find_exn elts "data" in
+      match typ with
+      | "newTrade" -> Trade (read_trade data)
+      | "orderBookModify" -> BookModify (read_book data)
+      | "orderBookRemove" -> BookRemove (read_book data)
+      | _ -> invalid_arg "Plnx_ws.M.to_msg"
+    with _ ->
+      Ticker (read_ticker e)
+
+  let ticker t = Ticker t
+  let trade t = Trade t
+  let book_modify entry = BookModify entry
+  let book_remove entry = BookRemove entry
+end
+
 module Make (B : BACKEND) = struct
+  include B
+
+  let subscribe w topics =
+    let topics = List.map topics ~f:Uri.of_string in
+    Deferred.List.map ~how:`Sequential topics ~f:begin fun topic ->
+      let request_id, subscribe_msg = EZ.subscribe topic in
+      Pipe.write w subscribe_msg >>| fun () ->
+      request_id
+    end
+
   let open_connection
       ?(heartbeat=Time_ns.Span.of_int_sec 25)
       ?log_ws
@@ -67,7 +192,7 @@ module Make (B : BACKEND) = struct
         Mvar.take mvar >>= fun _ ->
         loop_write mvar msg
       end
-      else B.write outbuf w msg
+      else B.write log outbuf w msg
     in
     let ws_w_mvar = Mvar.create () in
     let ws_w_mvar_ro = Mvar.read_only ws_w_mvar in
@@ -80,8 +205,8 @@ module Make (B : BACKEND) = struct
     let process_ws r w =
       (* Initialize *)
       Option.iter log ~f:(fun log -> Log.info log "[WS] connected to %s" uri_str);
-      let hello = B.(hello (Uri.of_string "realm1") [Subscriber]) in
-      B.write outbuf w hello >>= fun () ->
+      let hello = EZ.(hello (Uri.of_string "realm1") [Subscriber]) in
+      B.write log outbuf w hello >>= fun () ->
       Pipe.transfer' r client_w (B.transfer log)
     in
     let tcp_fun s r w =
@@ -91,10 +216,8 @@ module Make (B : BACKEND) = struct
           Conduit_async_ssl.ssl_connect ~version:Tlsv1_2 r w
         else return (r, w)
       end >>= fun (ssl_r, ssl_w) ->
-      let extra_headers =
-        Cohttp.Header.init_with "Sec-Websocket-Protocol" "wamp.2.msgpack.batched" in
       let ws_r, ws_w = Websocket_async.client_ez ?log:log_ws
-          ~opcode:Binary ~extra_headers ~heartbeat uri s ssl_r ssl_w
+          ~opcode:Binary ~extra_headers:B.headers ~heartbeat uri s ssl_r ssl_w
       in
       let cleanup r w ws_r ws_w =
         Pipe.close_read ws_r ;
@@ -135,143 +258,21 @@ module Make (B : BACKEND) = struct
     client_r
 end
 
-type msg =
-  | Ticker of Ticker.t
-  | Trade of Trade.t
-  | BookModify of Book.entry
-  | BookRemove of Book.entry
-
-let ticker t = Ticker t
-let trade t = Trade t
-let book_modify entry = BookModify entry
-let book_remove entry = BookRemove entry
-
 module type S = sig
-  type t
+  type repr
+  include Wamp.S with type repr := repr
 
   val open_connection :
     ?heartbeat:Time_ns.Span.t ->
     ?log_ws:Log.t ->
     ?log:Log.t ->
     ?disconnected:unit Condition.t ->
-    t Wamp.msg Pipe.Reader.t ->
-    t Wamp.msg Pipe.Reader.t
+    t Pipe.Reader.t ->
+    t Pipe.Reader.t
 
   val subscribe :
-    t Wamp.msg Pipe.Writer.t -> string list -> int list Deferred.t
-
-  val to_msg : t -> msg
+    t Pipe.Writer.t -> string list -> int list Deferred.t
 end
 
-module M = struct
-  include Make(Backend_msgpck)
-
-  let map_of_msgpck = function
-    | Msgpck.Map elts ->
-      List.fold_left elts ~init:String.Map.empty ~f:begin fun a -> function
-        | String k, v -> String.Map.add a k v
-        | _ -> invalid_arg "map_of_msgpck"
-      end
-    | _ -> invalid_arg "map_of_msgpck"
-
-  let subscribe w topics =
-    let topics = List.map topics ~f:Uri.of_string in
-    Deferred.List.map ~how:`Sequential topics ~f:begin fun topic ->
-      let request_id, subscribe_msg = Wamp_msgpck.subscribe topic in
-      Pipe.write w subscribe_msg >>| fun () ->
-      request_id
-    end
-
-  let read_ticker = function
-    | Msgpck.List [String symbol; String last; String ask; String bid; String pct_change;
-                   String base_volume; String quote_volume; Int is_frozen; String high24h;
-                   String low24h
-                  ] ->
-      let last = Float.of_string last in
-      let ask = Float.of_string ask in
-      let bid = Float.of_string bid in
-      let pct_change = Float.of_string pct_change in
-      let base_volume = Float.of_string base_volume in
-      let quote_volume = Float.of_string quote_volume in
-      let is_frozen = if is_frozen = 0 then false else true in
-      let high24h = Float.of_string high24h in
-      let low24h = Float.of_string low24h in
-      { Ticker.symbol ; last ; ask ; bid ; pct_change ; base_volume ;
-        quote_volume ; is_frozen ; high24h ; low24h }
-    | _ -> invalid_arg "read_ticker"
-
-  let read_trade msg = try
-      let msg = map_of_msgpck msg in
-      let id = String.Map.find_exn msg "tradeID" |> Msgpck.to_string |> Int.of_string in
-      let date = String.Map.find_exn msg "date" |> Msgpck.to_string in
-      let side = String.Map.find_exn msg "type" |> Msgpck.to_string in
-      let rate = String.Map.find_exn msg "rate" |> Msgpck.to_string in
-      let amount = String.Map.find_exn msg "amount" |> Msgpck.to_string in
-      let ts = Time_ns.(add (of_string (date ^ "Z")) @@ Span.of_int_ns id) in
-      let side = match side with "buy" -> `Buy | "sell" -> `Sell | _ -> invalid_arg "typ_of_string" in
-      let price = Float.of_string rate in
-      let qty = Float.of_string amount in
-      Trade.create ~id ~ts ~side ~price ~qty ()
-    with _ -> invalid_arg "read_trade"
-
-  let read_book msg = try
-      let msg = map_of_msgpck msg in
-      let side = String.Map.find_exn msg "type" |> Msgpck.to_string in
-      let price = String.Map.find_exn msg "rate" |> Msgpck.to_string in
-      let qty = String.Map.find msg "amount" |> Option.map ~f:Msgpck.to_string in
-      let side = Side.of_string side in
-      let price = Float.of_string price in
-      let qty = Option.value_map qty ~default:0. ~f:Float.of_string in
-      Book.create_entry ~side ~price ~qty
-    with _ -> invalid_arg "read_book"
-
-  let to_msg elts =
-    try
-      let elts = map_of_msgpck elts in
-      let typ = String.Map.find_exn elts "type" |> Msgpck.to_string in
-      let data = String.Map.find_exn elts "data" in
-      match typ with
-      | "newTrade" -> Trade (read_trade data)
-      | "orderBookModify" -> BookModify (read_book data)
-      | "orderBookRemove" -> BookRemove (read_book data)
-      | _ -> invalid_arg "Plnx_ws.M.to_msg"
-    with _ ->
-      Ticker (read_ticker elts)
-end
-
-(* module Yojson = struct *)
-(*   type nonrec t = Yojson.Safe.json t *)
-(*   let to_yojson = to_yojson Fn.id *)
-(*   let of_yojson = of_yojson (fun json -> Ok json) *)
-
-(*   let ticker_of_json = function *)
-(*     | `List [`String symbol; `String last; `String ask; `String bid; `String pct_change; *)
-(*              `String base_volume; `String quote_volume; `Int is_frozen; `String high24h; *)
-(*              `String low24h *)
-(*             ] -> *)
-(*       let last = Float.of_string last in *)
-(*       let ask = Float.of_string ask in *)
-(*       let bid = Float.of_string bid in *)
-(*       let pct_change = Float.of_string pct_change in *)
-(*       let base_volume = Float.of_string base_volume in *)
-(*       let quote_volume = Float.of_string quote_volume in *)
-(*       let is_frozen = if is_frozen = 0 then false else true in *)
-(*       let high24h = Float.of_string high24h in *)
-(*       let low24h = Float.of_string low24h in *)
-(*       { symbol ; last ; ask ; bid ; pct_change ; base_volume ; *)
-(*         quote_volume ; is_frozen ; high24h ; low24h } *)
-(*     | json -> invalid_argf "ticker_of_json: %s" Yojson.Safe.(to_string json) () *)
-
-(*   type book_raw = { *)
-(*     rate: string; *)
-(*     typ: string ; *)
-(*     amount: string option ; *)
-(*   } *)
-
-(*   let book_of_book_raw { rate; typ; amount } = *)
-(*     let side = match typ with "bid" -> `Buy | "ask" -> `Sell | _ -> invalid_arg "book_of_book_raw" in *)
-(*     let price = Fn.compose satoshis_int_of_float_exn Float.of_string rate in *)
-(*     let qty = Option.value_map amount ~default:0 ~f:(Fn.compose satoshis_int_of_float_exn Float.of_string) in *)
-(*     DB.{ side ; price ; qty } *)
-(* end *)
-
+module M = Make(Backend_msgpck)
+module J = Make(Backend_yojson)
