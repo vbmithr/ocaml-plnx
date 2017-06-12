@@ -135,12 +135,16 @@ module Make (B : BACKEND) = struct
     client_r
 end
 
-type 'a msg = {
-  typ: string ;
-  data: 'a;
-}
+type msg =
+  | Ticker of Ticker.t
+  | Trade of Trade.t
+  | BookModify of Book.entry
+  | BookRemove of Book.entry
 
-let create_msg ~typ ~data = { typ ; data }
+let ticker t = Ticker t
+let trade t = Trade t
+let book_modify entry = BookModify entry
+let book_remove entry = BookRemove entry
 
 module type S = sig
   type t
@@ -156,12 +160,7 @@ module type S = sig
   val subscribe :
     t Wamp.msg Pipe.Writer.t -> string list -> int list Deferred.t
 
-  val read_ticker : t -> Ticker.t
-  val read_trade : t -> Trade.t
-  val read_book : t -> Book.entry
-
-  val of_msg : t msg -> t
-  val to_msg : t -> (t msg, string) result
+  val to_msg : t -> msg
 end
 
 module M = struct
@@ -226,14 +225,18 @@ module M = struct
       Book.create_entry ~side ~price ~qty
     with _ -> invalid_arg "read_book"
 
-  let of_msg { typ; data } = Msgpck.(Map [String "type", String typ; String "data", data])
   let to_msg elts =
     try
       let elts = map_of_msgpck elts in
       let typ = String.Map.find_exn elts "type" |> Msgpck.to_string in
       let data = String.Map.find_exn elts "data" in
-      Result.return (create_msg ~typ ~data)
-    with exn -> Result.failf "%s" (Exn.to_string exn)
+      match typ with
+      | "newTrade" -> Trade (read_trade data)
+      | "orderBookModify" -> BookModify (read_book data)
+      | "orderBookRemove" -> BookRemove (read_book data)
+      | _ -> invalid_arg "Plnx_ws.M.to_msg"
+    with _ ->
+      Ticker (read_ticker elts)
 end
 
 (* module Yojson = struct *)

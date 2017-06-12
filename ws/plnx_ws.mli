@@ -3,10 +3,11 @@ open Async
 
 open Plnx
 
-type 'a msg = {
-  typ: string ;
-  data: 'a;
-}
+type msg =
+  | Ticker of Ticker.t
+  | Trade of Trade.t
+  | BookModify of Book.entry
+  | BookRemove of Book.entry
 
 module type S = sig
   type t
@@ -22,12 +23,7 @@ module type S = sig
   val subscribe :
     t Wamp.msg Pipe.Writer.t -> string list -> int list Deferred.t
 
-  val read_ticker : t -> Ticker.t
-  val read_trade : t -> Trade.t
-  val read_book : t -> Book.entry
-
-  val of_msg : t msg -> t
-  val to_msg : t -> (t msg, string) result
+  val to_msg : t -> msg
 end
 
 module M : S with type t := Msgpck.t
