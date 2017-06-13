@@ -104,16 +104,18 @@ let open_connection
   end
     (fun exn -> Option.iter log ~f:(fun log -> Log.error  log "%s" @@ Exn.to_string exn));
   let client_r, client_w = Pipe.create () in
-  let process_ws r w =
-    (* Initialize *)
-    Option.iter connected ~f:(fun c -> Condition.broadcast c ()) ;
-    Option.iter log ~f:(fun log -> Log.info log "[WS] connected to %s" uri_str);
-    Pipe.transfer r client_w ~f:begin fun str ->
-      Repr.of_yojson (Yojson.Safe.from_string ~buf str)
-    end
-  in
   let restart = Condition.create () in
+
+  let cleanup r w ws_r ws_w =
+    Pipe.close_read ws_r ;
+    Pipe.close ws_w ;
+    Deferred.all_unit [
+      Reader.close r ;
+      Writer.close w ;
+    ] in
+
   let tcp_fun s r w =
+    Option.iter connected ~f:(fun c -> Condition.broadcast c ()) ;
     Socket.(setopt s Opt.nodelay true);
     begin
       if scheme = "https" || scheme = "wss" then
@@ -122,14 +124,6 @@ let open_connection
     end >>= fun (ssl_r, ssl_w) ->
     let ws_r, ws_w = Websocket_async.client_ez ?log:log_ws
         ~opcode:Text ~heartbeat uri s ssl_r ssl_w
-    in
-    let cleanup r w ws_r ws_w =
-      Pipe.close_read ws_r ;
-      Pipe.close ws_w ;
-      Deferred.all_unit [
-        Reader.close r ;
-        Writer.close w ;
-      ]
     in
     don't_wait_for begin
       Deferred.all_unit
@@ -140,7 +134,10 @@ let open_connection
       cleanup ssl_r ssl_w ws_r ws_w
     end ;
     Mvar.set ws_w_mvar ws_w ;
-    process_ws ws_r ws_w
+    Option.iter log ~f:(fun log -> Log.info log "[WS] connected to %s" uri_str);
+    Pipe.transfer ws_r client_w ~f:begin fun str ->
+      Repr.of_yojson (Yojson.Safe.from_string ~buf str)
+    end
   in
   let rec loop () = begin
     Monitor.try_with_or_error ~name:"Plnx_ws_new.open_connection"
@@ -152,9 +149,9 @@ let open_connection
       Option.iter log ~f:(fun log ->
           Log.error log "[WS] connection to %s raised %s" uri_str (Error.to_string_hum err))
   end >>= fun () ->
+    Option.iter disconnected ~f:(fun c -> Condition.broadcast c ()) ;
     if Pipe.is_closed client_r then Deferred.unit
     else begin
-      Option.iter disconnected ~f:(fun c -> Condition.broadcast c ()) ;
       Option.iter log ~f:(fun log ->
           Log.error log "[WS] restarting connection to %s" uri_str);
       Clock_ns.after @@ Time_ns.Span.of_int_sec 10 >>=
