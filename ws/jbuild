@@ -2,11 +2,20 @@
  ((name        plnx_ws)
   (public_name plnx-ws)
   (modules (plnx_ws))
-  (preprocess (pps (ppx_sexp_conv)))
   (libraries (plnx
               core
               async
               cohttp
               wamp-msgpck
               wamp-yojson
+              websocket-async))))
+
+(library
+ ((name        plnx_ws_new)
+  (public_name plnx-ws-new)
+  (preprocess (pps (ppx_sexp_conv)))
+  (modules (plnx_ws_new))
+  (libraries (plnx
+              core
+              async
               websocket-async))))

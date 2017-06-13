@@ -4,7 +4,7 @@ open Log.Global
 
 open Plnx
 module Rest = Plnx_rest
-module Ws = Plnx_ws.M
+module Ws = Plnx_ws_new
 
 let default_cfg = Filename.concat (Option.value_exn (Sys.getenv "HOME")) ".virtu"
 let find_auth cfg exchange =
@@ -132,19 +132,18 @@ let plnx key secret topics =
     loop ()
   in
   let to_ws, to_ws_w = Pipe.create () in
-  let r = Ws.open_connection ~log:(Lazy.force log) to_ws in
-  let transfer_f q =
-    Deferred.Queue.filter_map q ~f:begin function
-      | Ws.Welcome _ as msg ->
-        debug "Welcome message received, subscribing." ;
-        Ws.subscribe to_ws_w topics >>| fun _req_ids ->
-        Some (Format.asprintf "%a@." Ws.pp msg)
-      | msg -> return (Some (Format.asprintf "%a@." Ws.pp msg))
-    end
+  let connected = Condition.create () in
+  don't_wait_for begin
+    Condition.wait connected >>= fun () ->
+    Deferred.List.iter topics ~f:(fun t -> Pipe.write to_ws_w (Ws.Repr.Subscribe t))
+  end ;
+  let _restart, r = Ws.open_connection ~connected ~log:(Lazy.force log) to_ws in
+  let transfer_f msg =
+      Format.asprintf "%a@." Sexplib.Sexp.pp_hum (Ws.Repr.sexp_of_t msg)
   in
   Deferred.all_unit [
     process_user_cmd ();
-    Pipe.transfer' r Writer.(pipe @@ Lazy.force stderr) ~f:transfer_f
+    Pipe.transfer r Writer.(pipe @@ Lazy.force stderr) ~f:transfer_f
   ]
 
 let loglevel_of_int = function 2 -> `Info | 3 -> `Debug | _ -> `Error
