@@ -136,6 +136,10 @@ val tickers :
   ?buf:Bi_outbuf.t -> unit ->
   (Ticker.t list, Http_error.t) Result.t Deferred.t
 
+val ticker :
+  ?buf:Bi_outbuf.t -> string ->
+  (Ticker.t option, Http_error.t) Result.t Deferred.t
+
 val books :
   ?buf:Bi_outbuf.t -> ?depth:int -> string ->
   (Books.t, Http_error.t) Result.t Deferred.t

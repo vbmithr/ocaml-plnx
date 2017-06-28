@@ -116,6 +116,10 @@ let tickers ?buf () =
     | #Yojson.Safe.json -> Http_error.data_shape "expected object"
   end
 
+let ticker ?buf symbol =
+  tickers ?buf () >>|
+  Result.map ~f:(List.find ~f:(fun { Ticker.symbol = symbol' } -> symbol = symbol'))
+
 let bids_asks_of_yojson side records =
   List.map records ~f:(function
       | `List [`String price; `Int qty] ->
