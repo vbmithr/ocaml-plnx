@@ -1,5 +1,58 @@
 open Core
 
+module Encoding = struct
+  open Json_encoding
+
+  let string_float =
+    conv Float.to_string Float.of_string string
+
+  let string_bool =
+    string_enum [
+      "1", true ;
+      "0", false
+    ]
+
+  let date =
+    conv
+      (fun _ -> invalid_arg "Encoding.date")
+      (fun date -> Time_ns.of_string (date ^ "Z"))
+      string
+end
+
+module Side = struct
+  type t = [
+    | `buy
+    | `sell
+    | `buy_sell_unset
+  ] [@@deriving sexp]
+
+  let to_string = function
+    | `buy -> "buy"
+    | `sell -> "sell"
+    | `buy_sell_unset -> ""
+
+  let of_string = function
+    | "buy" -> `buy
+    | "sell" -> `sell
+    | "bid" -> `buy
+    | "ask" -> `sell
+    | _ -> invalid_arg "Side.of_string"
+
+  let encoding =
+    let open Json_encoding in
+    string_enum [
+      "buy", `buy ;
+      "bid", `buy ;
+      "sell", `sell ;
+      "ask", `sell ;
+    ]
+end
+
+type time_in_force = [
+  | `Fill_or_kill
+  | `Immediate_or_cancel
+]
+
 module Ticker = struct
   type t = {
     symbol: string;
@@ -16,72 +69,28 @@ module Ticker = struct
 
   let encoding ~symbol =
     let open Json_encoding in
+    let open Encoding in
     conv
-      (fun { symbol; last; ask ; bid ; pct_change ; base_volume ; quote_volume ;
-             is_frozen ; high24h ; low24h } ->
-        let open Float in
-        let last = to_string last in
-        let lowestAsk = to_string ask in
-        let highestBid = to_string bid in
-        let percentChange = to_string pct_change in
-        let baseVolume = to_string base_volume in
-        let quoteVolume = to_string quote_volume in
-        let isFrozen = if is_frozen then "1" else "0" in
-        let high24hr = to_string high24h in
-        let low24hr = to_string low24h in
-        (0, last, lowestAsk, highestBid, percentChange, baseVolume,
-         quoteVolume, isFrozen, high24hr, low24hr))
-      (fun (id, last, lowestAsk, highestBid, percentChange, baseVolume,
-            quoteVolume, isFrozen, high24hr, low24hr) -> {
-          symbol ;
-          last = (Float.of_string last) ;
-          ask = (Float.of_string lowestAsk) ;
-          bid = (Float.of_string highestBid) ;
-          pct_change = (Float.of_string percentChange) ;
-          base_volume = (Float.of_string baseVolume) ;
-          quote_volume = (Float.of_string quoteVolume) ;
-          is_frozen = (match Int.of_string isFrozen with 0 -> false | _ -> true) ;
-          high24h = (Float.of_string high24hr) ;
-          low24h = (Float.of_string high24hr) })
+      (fun { symbol; last; ask ; bid ; pct_change ; base_volume ;
+             quote_volume ; is_frozen ; high24h ; low24h } ->
+        (0, last, ask, bid, pct_change, base_volume,
+         quote_volume, is_frozen, high24h, low24h))
+      (fun (id, last, ask, bid, pct_change, base_volume,
+            quote_volume, is_frozen, high24h, low24h) ->
+        { symbol ; last ; ask ; bid ; pct_change ; base_volume ;
+          quote_volume ; is_frozen ; high24h ; low24h })
       (obj10
          (req "id" int)
-         (req "last" string)
-         (req "lowestAsk" string)
-         (req "highestBid" string)
-         (req "percentChange" string)
-         (req "baseVolume" string)
-         (req "quoteVolume" string)
-         (req "isFrozen" string)
-         (req "high24hr" string)
-         (req "low24hr" string))
+         (req "last" string_float)
+         (req "lowestAsk" string_float)
+         (req "highestBid" string_float)
+         (req "percentChange" string_float)
+         (req "baseVolume" string_float)
+         (req "quoteVolume" string_float)
+         (req "isFrozen" string_bool)
+         (req "high24hr" string_float)
+         (req "low24hr" string_float))
 end
-
-module Side = struct
-  type t = [`Buy | `Sell] [@@deriving sexp]
-
-  let to_string = function `Buy -> "buy" | `Sell -> "sell"
-
-  let of_string = function
-    | "buy" -> `Buy
-    | "sell" -> `Sell
-    | "bid" -> `Buy
-    | "ask" -> `Sell
-    | _ -> invalid_arg "Side.of_string"
-
-  let encoding =
-    let open Json_encoding in
-    string_enum [
-      "buy", `Buy ;
-      "bid", `Buy ;
-      "sell", `Sell ;
-      "ask", `Sell ;
-    ]
-end
-
-type time_in_force = [
-  | `Fill_or_kill
-  | `Immediate_or_cancel
-]
 
 let margin_enabled = function
 | "BTC_XMR"
@@ -113,23 +122,20 @@ module Trade = struct
 
   let encoding =
     let open Json_encoding in
+    let open Encoding in
     conv
-      (fun _ -> (None, "", "", "", "", "", ""))
-      (fun (gid, id, date, typ, rate, amount, total) ->
-         let id = Int.of_string id in
-         let ts = Time_ns.(add (of_string (date ^ "Z")) (Span.of_int_ns id)) in
-         let side = Side.of_string typ in
-         let price = Float.of_string rate in
-         let qty = Float.of_string amount in
+      (fun _ -> invalid_arg "Trade.construct not implemented")
+      (fun (gid, id, date, side, price, qty, _total) ->
+         let ts = Time_ns.(add date (Span.of_int_ns id)) in
          { gid ; id ; ts ; side ; price ; qty })
       (obj7
          (opt "globalTradeID" int)
-         (req "tradeID" string)
-         (req "date" string)
-         (req "type" string)
-         (req "rate" string)
-         (req "amount" string)
-         (req "total" string))
+         (req "tradeID" int)
+         (req "date" date)
+         (req "type" Side.encoding)
+         (req "rate" string_float)
+         (req "amount" string_float)
+         (req "total" string_float))
 end
 
 module Book = struct

@@ -96,7 +96,7 @@ let plnx key secret topics =
         | Error err -> error "%s" @@ Rest.Http_error.to_string err
         end
       | [side; symbol; price; qty] ->
-        let side = match side with "buy" -> `Buy | "sell" -> `Sell | _ -> failwith "side" in
+        let side = Side.of_string side in
         let price = Float.of_string price in
         let qty = Float.of_string qty in
         if Plnx.margin_enabled symbol then

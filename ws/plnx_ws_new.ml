@@ -35,8 +35,8 @@ module Repr = struct
     end
 
   let side_of_int = function
-    | 0 -> `Sell
-    | 1 -> `Buy
+    | 0 -> `sell
+    | 1 -> `buy
     | _ -> invalid_arg "Repr.side_of_int"
 
   let event_of_yojson = function

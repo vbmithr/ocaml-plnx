@@ -123,7 +123,7 @@ module Msg = struct
       let rate = String.Map.find_exn msg "rate" |> Wamp.Element.to_string in
       let amount = String.Map.find_exn msg "amount" |> Wamp.Element.to_string in
       let ts = Time_ns.(add (of_string (date ^ "Z")) @@ Span.of_int_ns id) in
-      let side = match side with "buy" -> `Buy | "sell" -> `Sell | _ -> invalid_arg "typ_of_string" in
+      let side = Side.of_string side in
       let price = Float.of_string rate in
       let qty = Float.of_string amount in
       Trade.create ~id ~ts ~side ~price ~qty ()

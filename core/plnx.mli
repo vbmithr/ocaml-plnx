@@ -1,7 +1,11 @@
 open Core
 
 module Side : sig
-  type t = [`Buy | `Sell] [@@deriving sexp]
+  type t = [
+    | `buy
+    | `sell
+    | `buy_sell_unset
+  ] [@@deriving sexp]
 
   val to_string : t -> string
   val of_string : string -> t
