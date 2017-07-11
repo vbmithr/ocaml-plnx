@@ -7,9 +7,9 @@ module Yojson_encoding = Json_encoding.Make(Json_repr.Yojson)
 
 open Cohttp_async
 
-exception Client of string
-exception Server of string
-exception Poloniex of string
+exception ClientError of string
+exception ServerError of string
+exception PoloniexError of string
 
 let ssl_config = Conduit_async.Ssl.configure ~version:Tlsv1_2 ()
 
@@ -48,28 +48,35 @@ module Http_error = struct
 end
 
 let safe_get ?buf ?log url =
-  Monitor.try_with begin fun () ->
+  Monitor.try_with ~extract_exn:true begin fun () ->
     Client.get ~ssl_config url >>= fun (resp, body) ->
     let status_code = Cohttp.Code.code_of_status resp.status in
     Body.to_string body >>| fun body_str ->
     Option.iter log ~f:(fun log -> Log.debug log "%s" body_str) ;
     let body_json = Yojson.Safe.from_string ?buf body_str in
-    if Cohttp.Code.is_client_error status_code then raise (Client body_str)
-    else if Cohttp.Code.is_server_error status_code then raise (Server body_str)
+    if Cohttp.Code.is_client_error status_code then
+      raise (ClientError body_str)
+    else if Cohttp.Code.is_server_error status_code then
+      raise (ServerError body_str)
     else match body_json with
-      | `Assoc ["error", `String msg] -> raise (Poloniex msg)
-      | #Yojson.Safe.json as json -> json
+      | `Assoc ["error", `String msg] ->
+        raise (PoloniexError msg)
+      | #Yojson.Safe.json as json ->
+        json
   end >>| Result.map_error ~f:begin function
-    | Client str -> Http_error.Client str
-    | Server str -> Server str
-    | Poloniex str -> Poloniex str
+    | ClientError str -> Http_error.Client str
+    | ServerError str -> Server str
+    | PoloniexError str -> Poloniex str
     | exn -> Cohttp exn
   end
 
 module SHA512 = Rakia.SHA512.Bytes
 
+let latest_nonce = ref (Time_ns.(now () |> to_int_ns_since_epoch) / 1_000)
+
 let sign ~key ~secret ~data =
-  let nonce = Time_ns.(now () |> to_int_ns_since_epoch) / 1_000 in
+  let nonce = !latest_nonce in
+  incr latest_nonce ;
   let data = ("nonce", [Int.to_string nonce]) :: data in
   let prehash = Uri.encoded_of_query data in
   let signature = SHA512.(to_hex (hmac ~key:secret prehash)) in
@@ -83,21 +90,25 @@ let sign ~key ~secret ~data =
 let safe_post ?buf ?log ~key ~secret ~data url =
   let body, headers = sign ~key ~secret ~data in
   let body = Body.of_string body in
-  Monitor.try_with begin fun () ->
+  Monitor.try_with ~extract_exn:true begin fun () ->
     Client.post ~ssl_config ~headers ~body url >>= fun (resp, body) ->
     let status_code = Cohttp.Code.code_of_status resp.status in
     Body.to_string body >>| fun body_str ->
     Option.iter log ~f:(fun log -> Log.debug log "%s" body_str) ;
     let body_json = Yojson.Safe.from_string ?buf body_str in
-    if Cohttp.Code.is_client_error status_code then raise (Client body_str)
-    else if Cohttp.Code.is_server_error status_code then raise (Server body_str)
-    else match body_json with
-      | `Assoc ["error", `String msg] -> raise (Poloniex msg)
-      | #Yojson.Safe.json as json -> json
+    match body_json with
+    | `Assoc ["error", `String msg] ->
+      if Cohttp.Code.is_client_error status_code then raise (ClientError msg)
+      else if Cohttp.Code.is_server_error status_code then raise (ServerError msg)
+      else raise (PoloniexError msg)
+    | #Yojson.Safe.json as json ->
+      if Cohttp.Code.is_client_error status_code then raise (ClientError body_str)
+      else if Cohttp.Code.is_server_error status_code then raise (ServerError body_str)
+      else json
   end >>| Result.map_error ~f:begin function
-    | Client str -> Http_error.Client str
-    | Server str -> Server str
-    | Poloniex str -> Poloniex str
+    | ClientError str -> Http_error.Client str
+    | ServerError str -> Server str
+    | PoloniexError str -> Poloniex str
     | exn -> Cohttp exn
   end
 
@@ -211,11 +222,11 @@ let trades ?log ?start_ts ?end_ts symbol =
     ] in
   let decoder = Jsonm.decoder `Manual in
   Option.iter log ~f:(fun log -> Log.debug log "GET %s" (Uri.to_string url)) ;
-  Monitor.try_with begin fun () ->
+  Monitor.try_with ~extract_exn:true begin fun () ->
     Client.get ~ssl_config url >>| fun (resp, body) ->
     let status_code = Cohttp.Code.code_of_status resp.status in
-    if Cohttp.Code.is_client_error status_code then raise (Client "<body>")
-    else if Cohttp.Code.is_server_error status_code then raise (Server "<body>")
+    if Cohttp.Code.is_client_error status_code then raise (ClientError "<body>")
+    else if Cohttp.Code.is_server_error status_code then raise (ServerError "<body>")
     else
       Pipe.create_reader ~close_on_exception:false begin fun w ->
         let body_pipe = Body.to_pipe body in
@@ -224,8 +235,8 @@ let trades ?log ?start_ts ?end_ts symbol =
           ~f:(fold_trades_exn ?log w decoder)
       end
   end >>| Result.map_error ~f:begin function
-    | Client str -> Http_error.Client str
-    | Server str -> Server str
+    | ClientError str -> Http_error.Client str
+    | ServerError str -> Server str
     | exn -> Cohttp exn
   end
 
