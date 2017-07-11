@@ -17,6 +17,12 @@ module Encoding = struct
       (fun _ -> invalid_arg "Encoding.date")
       (fun date -> Time_ns.of_string (date ^ "Z"))
       string
+
+  let string_int_or_int =
+    union [
+      case int (fun i -> Some i) Fn.id ;
+      case string (fun i -> Some (Int.to_string i)) Int.of_string
+    ]
 end
 
 module Side = struct
@@ -129,8 +135,8 @@ module Trade = struct
          let ts = Time_ns.(add date (Span.of_int_ns id)) in
          { gid ; id ; ts ; side ; price ; qty })
       (obj7
-         (opt "globalTradeID" int)
-         (req "tradeID" int)
+         (opt "globalTradeID" string_int_or_int)
+         (req "tradeID" string_int_or_int)
          (req "date" date)
          (req "type" Side.encoding)
          (req "rate" string_float)
