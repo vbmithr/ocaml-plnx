@@ -100,12 +100,12 @@ let plnx key secret topics =
         let price = Float.of_string price in
         let qty = Float.of_string qty in
         if Plnx.margin_enabled symbol then
-          Rest.margin_order ~key ~secret ~symbol ~side ~price ~qty () >>| begin function
+          Rest.submit_margin_order ~key ~secret ~symbol ~side ~price ~qty () >>| begin function
           | Ok resp -> info "%s" (Rest.OrderResponse.sexp_of_t resp |> Sexplib.Sexp.to_string)
           | Error err -> error "%s" @@ Rest.Http_error.to_string err
           end
         else
-          Rest.order ~key ~secret ~symbol ~side ~price ~qty () >>| begin function
+          Rest.submit_order ~key ~secret ~symbol ~side ~price ~qty () >>| begin function
           | Ok resp -> info "%s" (Rest.OrderResponse.sexp_of_t resp |> Sexplib.Sexp.to_string)
           | Error err -> error "%s" @@ Rest.Http_error.to_string err
           end

@@ -3,7 +3,15 @@ open Async
 
 open Plnx
 
-module Yojson_encoding = Json_encoding.Make(Json_repr.Yojson)
+module Yojson_encoding = struct
+  include Json_encoding.Make(Json_repr.Yojson)
+
+  let destruct_safe encoding value =
+    try destruct encoding value with exn ->
+      Format.eprintf "%a"
+        (Json_encoding.print_error ?print_unknown:None) exn ;
+      raise exn
+end
 
 open Cohttp_async
 
@@ -121,7 +129,7 @@ let tickers ?buf ?log () =
     | `Assoc tickers ->
       begin try
           Ok (List.rev_map tickers ~f:begin fun (symbol, t) ->
-              Yojson_encoding.destruct (Ticker.encoding symbol) t
+              Yojson_encoding.destruct_safe (Ticker.encoding symbol) t
             end)
         with exn -> Http_error.data_encoding exn
       end
@@ -181,7 +189,7 @@ let books ?buf ?log ?depth symbol =
     ] in
   safe_get ?buf ?log url >>| Result.bind ~f:begin fun json ->
     try
-      Ok (Yojson_encoding.destruct Books.encoding json)
+      Ok (Yojson_encoding.destruct_safe Books.encoding json)
     with exn -> Http_error.data_encoding exn
   end
 
@@ -199,7 +207,7 @@ let fold_trades_exn ?log w decoder (nb_decoded, name, tmp) chunk =
     | `Lexeme (`String s) -> decode nb_decoded "" ((name, `String s)::tmp)
     | `Lexeme (`Name name) -> decode nb_decoded name tmp
     | `Lexeme `Oe ->
-      let trade = Yojson_encoding.destruct Trade.encoding (`Assoc tmp) in
+      let trade = Yojson_encoding.destruct_safe Trade.encoding (`Assoc tmp) in
       Pipe.write w trade >>= fun () ->
       decode (succ nb_decoded) "" []
     | `Lexeme `Ae -> return (nb_decoded, name, tmp)
@@ -302,7 +310,7 @@ let currencies ?buf ?log () =
     | `Assoc currs ->
       begin try
           Ok (List.map currs ~f:begin fun (code, obj) ->
-              code, (Yojson_encoding.destruct Currency.encoding obj)
+              code, (Yojson_encoding.destruct_safe Currency.encoding obj)
             end)
         with exn -> Http_error.data_encoding exn
       end
@@ -345,7 +353,7 @@ let balances ?buf ?log ?(all=true) ~key ~secret () =
     | `Assoc balances -> begin
         try
           Result.return @@
-          List.Assoc.map balances ~f:(Yojson_encoding.destruct Balance.encoding)
+          List.Assoc.map balances ~f:(Yojson_encoding.destruct_safe Balance.encoding)
         with exn -> Http_error.data_encoding exn
       end
     | #Yojson.Safe.json -> Http_error.poloniex_fail "balances"
@@ -433,7 +441,7 @@ end
 let margin_account_summary ?buf ?log ~key ~secret () =
   let data = ["command", ["returnMarginAccountSummary"]] in
   safe_post ?buf ?log ~key ~secret ~data trading_url >>| Result.bind ~f:begin fun json ->
-    Ok (Yojson_encoding.destruct MarginAccountSummary.encoding json)
+    Ok (Yojson_encoding.destruct_safe MarginAccountSummary.encoding json)
   end
 
 let or_error encoding =
@@ -474,7 +482,7 @@ module OrderResponse = struct
             (opt "amountUnfilled" flstring)))
 end
 
-let order ?buf ?log ?tif ?(post_only=false)
+let submit_order ?buf ?log ?tif ?(post_only=false)
     ~key ~secret ~side ~symbol ~price ~qty () =
   let data = List.filter_opt [
       Some ("command", [Side.to_string side]);
@@ -488,7 +496,7 @@ let order ?buf ?log ?tif ?(post_only=false)
       (if post_only then Some ("postOnly", ["1"]) else None)
     ] in
   safe_post ?buf ~key ~secret ~data trading_url >>|
-  Result.bind ~f:(Yojson_encoding.destruct (or_error OrderResponse.encoding))
+  Result.bind ~f:(Yojson_encoding.destruct_safe (or_error OrderResponse.encoding))
 
 let cancel_order ?buf ?log ~key ~secret ~order_id () =
   let response_encoding = or_error Json_encoding.unit in
@@ -497,7 +505,7 @@ let cancel_order ?buf ?log ~key ~secret ~order_id () =
     "orderNumber", [Int.to_string order_id];
   ] in
   safe_post ?buf ~key ~secret ~data trading_url >>|
-  Result.bind ~f:(Yojson_encoding.destruct response_encoding)
+  Result.bind ~f:(Yojson_encoding.destruct_safe response_encoding)
 
 let modify_order ?buf ?log ?qty ~key ~secret ~price ~order_id () =
   let data = List.filter_opt [
@@ -507,9 +515,9 @@ let modify_order ?buf ?log ?qty ~key ~secret ~price ~order_id () =
       Option.map qty ~f:(fun amount -> "amount", [Float.to_string amount])
     ] in
   safe_post ?buf ~key ~secret ~data trading_url >>|
-  Result.bind ~f:(Yojson_encoding.destruct (or_error OrderResponse.encoding))
+  Result.bind ~f:(Yojson_encoding.destruct_safe (or_error OrderResponse.encoding))
 
-let margin_order
+let submit_margin_order
     ?buf
     ?log
     ?tif
@@ -534,7 +542,7 @@ let margin_order
       (if post_only then Some ("postOnly", ["1"]) else None)
     ] in
   safe_post ?buf ~key ~secret ~data trading_url >>|
-  Result.bind ~f:(Yojson_encoding.destruct (or_error OrderResponse.encoding))
+  Result.bind ~f:(Yojson_encoding.destruct_safe (or_error OrderResponse.encoding))
 
 (*   let close_position ?buf ~key ~secret symbol = *)
 (*     let data = [ *)
@@ -599,7 +607,7 @@ let open_orders ?buf ?log ?(symbol="all") ~key ~secret () =
     "command", ["returnOpenOrders"];
     "currencyPair", [symbol];
   ] in
-  let map_f = Yojson_encoding.destruct OpenOrders.encoding in
+  let map_f = Yojson_encoding.destruct_safe OpenOrders.encoding in
   safe_post ?buf ~key ~secret ~data trading_url >>| Result.bind ~f:begin function
     | `List oos ->
       Result.return [symbol, List.map oos ~f:map_f]
@@ -684,7 +692,7 @@ let trade_history ?buf ?log ?(symbol="all") ?start ?stop ~key ~secret () =
         "end", [Int.to_string @@ Time_ns.to_int_ns_since_epoch ts / 1_000_000_000]
       end ;
     ] in
-  let map_f = Yojson_encoding.destruct TradeHistory.encoding in
+  let map_f = Yojson_encoding.destruct_safe TradeHistory.encoding in
   safe_post ?buf ~key ~secret ~data trading_url >>| Result.bind ~f:begin function
     | `List ths -> Result.return @@ [symbol, List.map ths ~f:map_f]
     | `Assoc oo_assoc ->
@@ -741,7 +749,7 @@ end
 
 let margin_positions ?buf ?log ~key ~secret () =
   let data = ["command", ["getMarginPosition"]; "currencyPair", ["all"]] in
-  let destruct = Yojson_encoding.destruct MarginPosition.position_encoding in
+  let destruct = Yojson_encoding.destruct_safe MarginPosition.position_encoding in
   safe_post ?buf ?log ~key ~secret ~data trading_url >>| Result.bind ~f:begin function
     | `Assoc ps_assoc ->
       Ok (List.map ps_assoc ~f:(fun (symbol, p) -> symbol, destruct p))

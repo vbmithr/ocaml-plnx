@@ -188,13 +188,13 @@ val balances :
   key:string -> secret:string -> unit ->
   ((string * Balance.t) list, Http_error.t) Result.t Deferred.t
 
-val order :
+val submit_order :
   ?buf:Bi_outbuf.t -> ?log:Log.t -> ?tif:time_in_force -> ?post_only:bool ->
   key:string -> secret:string ->
   side:Side.t -> symbol:string -> price:float -> qty:float -> unit ->
   (OrderResponse.t, Http_error.t) result Deferred.t
 
-val margin_order :
+val submit_margin_order :
   ?buf:Bi_outbuf.t -> ?log:Log.t -> ?tif:time_in_force ->
   ?post_only:bool -> ?max_lending_rate:float ->
   key:string -> secret:string ->
