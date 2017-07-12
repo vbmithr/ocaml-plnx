@@ -79,7 +79,7 @@ let safe_get ?buf ?log url =
     | exn -> Cohttp exn
   end
 
-module SHA512 = Rakia.SHA512.Bytes
+module SHA512 = Digestif.SHA512.Bytes
 
 let latest_nonce = ref (Time_ns.(now () |> to_int_ns_since_epoch) / 1_000)
 

@@ -8,6 +8,6 @@
               async
               yojson
               jsonm
-              digestif.rakia
+              digestif.c
               ocplib-json-typed
               cohttp-async))))
