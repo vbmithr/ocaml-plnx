@@ -98,9 +98,12 @@ end
 module OrderResponse : sig
   type t = {
     id : int ;
-    trades : Trade.t list ;
+    trades : (string * Plnx.Trade.t list) list;
     amount_unfilled : float ;
   } [@@deriving sexp]
+
+  val trades_of_symbol :
+    (string * Plnx.Trade.t list) list -> string -> Plnx.Trade.t list
 end
 
 module Books : sig

@@ -8,7 +8,8 @@ module Yojson_encoding = struct
 
   let destruct_safe encoding value =
     try destruct encoding value with exn ->
-      Format.eprintf "%a"
+      let value_str = Yojson.Safe.to_string value in
+      Format.eprintf "%s@.%a@." value_str
         (Json_encoding.print_error ?print_unknown:None) exn ;
       raise exn
 end
@@ -463,22 +464,42 @@ let or_error encoding =
 module OrderResponse = struct
   type t = {
     id : int ;
-    trades : Trade.t list ;
+    trades : (string * Trade.t list) list ;
     amount_unfilled : float ;
   } [@@deriving sexp]
+
+  let trades_of_symbol trades symbol =
+    match List.Assoc.find trades ~equal:String.equal symbol with
+    | Some trades -> trades
+    | None -> List.Assoc.find_exn trades ~equal:String.equal ""
 
   let encoding =
     let open Json_encoding in
     conv
-      (fun _ -> ((), ("", [], None)))
+      (fun _ -> invalid_arg "Order_response.encoding: not implemented")
       (fun ((), (id, trades, amount_unfilled)) ->
          let id = Int.of_string id in
-         let amount_unfilled =  Option.value amount_unfilled ~default:0. in
+         let amount_unfilled = Option.value amount_unfilled ~default:0. in
+         let trades =
+           match Json_repr.(any_to_repr (module Yojson) trades) with
+           | `Assoc assc ->
+             List.map assc ~f:begin fun (symbol, trades) ->
+               symbol,
+               Yojson_encoding.destruct_safe (list Trade.encoding) trades
+             end
+           | `List l ->
+             List.map l ~f:begin fun trades ->
+               "",
+               Yojson_encoding.destruct_safe (list Trade.encoding) trades
+             end
+           | #Yojson.Safe.json as json ->
+             invalid_argf "OrderResponse: %s" (Yojson.Safe.to_string json) ()
+         in
          { id ; trades ; amount_unfilled })
       (merge_objs unit
          (obj3
             (req "orderNumber" string)
-            (dft "resultingTrades" (list Trade.encoding) [])
+            (dft "resultingTrades" any_value Json_repr.(repr_to_any (module Yojson) (`List [])))
             (opt "amountUnfilled" flstring)))
 end
 
