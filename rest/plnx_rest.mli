@@ -48,7 +48,7 @@ module TradeHistory : sig
   module Set : Set.S with type Elt.t = t
 end
 
-module OpenOrders : sig
+module OpenOrder : sig
   type t = {
     id: int;
     ts: Time_ns.t;
@@ -58,6 +58,15 @@ module OpenOrders : sig
     qty: float;
     margin: int;
   } [@@deriving sexp]
+
+  val create :
+    id:int ->
+    ts:Time_ns.t ->
+    side:Side.t ->
+    price:float ->
+    starting_qty:float ->
+    qty:float ->
+    margin:int -> t
 
   val compare : t -> t -> int
 
@@ -173,7 +182,7 @@ val margin_account_summary :
 val open_orders :
   ?buf:Bi_outbuf.t -> ?log:Log.t -> ?symbol:string ->
   key:string -> secret:string -> unit ->
-  ((string * OpenOrders.t list) list, Http_error.t) Result.t Deferred.t
+  ((string * OpenOrder.t list) list, Http_error.t) Result.t Deferred.t
 
 val trade_history :
   ?buf:Bi_outbuf.t -> ?log:Log.t -> ?symbol:string ->

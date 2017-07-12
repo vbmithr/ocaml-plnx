@@ -73,7 +73,7 @@ let plnx key secret topics =
         | Ok resp ->
           let nb_nonempty = List.fold_left ~init:0  resp ~f:begin fun i (s, oos) ->
               if oos <> [] then begin
-                info "%s: %s" s Sexplib.(Std.sexp_of_list Rest.OpenOrders.sexp_of_t oos |> Sexp.to_string);
+                info "%s: %s" s Sexplib.(Std.sexp_of_list Rest.OpenOrder.sexp_of_t oos |> Sexp.to_string);
                 succ i
               end
               else i

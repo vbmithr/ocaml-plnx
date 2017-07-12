@@ -581,7 +581,7 @@ let submit_margin_order
 (*       | Error _ -> failwith body_str *)
 (*     end *)
 
-module OpenOrders = struct
+module OpenOrder = struct
   module T = struct
     type t = {
       id: int ;
@@ -592,6 +592,9 @@ module OpenOrders = struct
       qty: float ;
       margin: int ;
     } [@@deriving sexp]
+
+    let create ~id ~ts ~side ~price ~starting_qty ~qty ~margin =
+      { id ; ts ; side ; price ; starting_qty ; qty ; margin }
 
     let compare t t' = Int.compare t.id t'.id
   end
@@ -628,7 +631,7 @@ let open_orders ?buf ?log ?(symbol="all") ~key ~secret () =
     "command", ["returnOpenOrders"];
     "currencyPair", [symbol];
   ] in
-  let map_f = Yojson_encoding.destruct_safe OpenOrders.encoding in
+  let map_f = Yojson_encoding.destruct_safe OpenOrder.encoding in
   safe_post ?buf ~key ~secret ~data trading_url >>| Result.bind ~f:begin function
     | `List oos ->
       Result.return [symbol, List.map oos ~f:map_f]
