@@ -56,7 +56,8 @@ module Repr = struct
       let side = side_of_int side in
       let ts = Time_ns.of_int_ns_since_epoch (ts * 1_000_000_000) in
       Trade (Trade.create ~id ~ts ~side ~price ~qty ())
-    | #Yojson.Safe.json -> invalid_arg "Repr.event_of_yojson"
+    | #Yojson.Safe.json as json ->
+      invalid_argf "Repr.event_of_yojson: %s" (Yojson.Safe.to_string json) ()
 
   let of_yojson = function
     | `Assoc [ "error", `String msg ] -> Error msg
