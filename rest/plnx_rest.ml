@@ -144,9 +144,9 @@ let ticker ?buf ?log symbol =
 let bids_asks_of_yojson side records =
   List.map records ~f:(function
       | `List [`String price; `Int qty] ->
-        Book.create_entry ~side ~price:(Float.of_string price) ~qty:(Int.to_float qty)
+        BookEntry.create ~side ~price:(Float.of_string price) ~qty:(Int.to_float qty)
       | `List [`String price; `Float qty] ->
-        Book.create_entry ~side ~price:(Float.of_string price) ~qty
+        BookEntry.create ~side ~price:(Float.of_string price) ~qty
       | #Yojson.Safe.json -> invalid_arg "bids_asks_of_yojson")
 
 let bids_asks_of_yojson side = function
@@ -158,8 +158,8 @@ let asks_of_yojson = bids_asks_of_yojson `sell
 
 module Books = struct
   type t = {
-    asks: Book.entry list;
-    bids: Book.entry list;
+    asks: BookEntry.t list;
+    bids: BookEntry.t list;
     isFrozen: bool;
     seq: int;
   }

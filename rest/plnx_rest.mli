@@ -117,8 +117,8 @@ end
 
 module Books : sig
   type t = {
-    asks: Book.entry list;
-    bids: Book.entry list;
+    asks: BookEntry.t list;
+    bids: BookEntry.t list;
     isFrozen: bool;
     seq: int;
   }

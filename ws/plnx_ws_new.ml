@@ -12,7 +12,7 @@ module Repr = struct
 
   type event =
     | Snapshot of snapshot
-    | Update of Book.entry
+    | Update of BookEntry.t
     | Trade of Trade.t
   [@@deriving sexp]
 
@@ -48,7 +48,7 @@ module Repr = struct
       let price = Float.of_string price in
       let qty = Float.of_string qty in
       let side = side_of_int side in
-      Update (Book.create_entry ~side ~price ~qty)
+      Update (BookEntry.create ~side ~price ~qty)
     | `List [`String "t" ; `String id ; `Int side ; `String price ; `String qty ; `Int ts ] ->
       let id = Int.of_string id in
       let price = Float.of_string price in

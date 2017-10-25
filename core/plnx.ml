@@ -113,58 +113,70 @@ let margin_enabled = function
 | _ -> false
 
 module Trade = struct
-  type t = {
-    gid : int option ;
-    id : int ;
-    ts: Time_ns.t ;
-    side: Side.t ;
-    price: float ;
-    qty: float ;
-  } [@@deriving sexp]
+  module T = struct
+    type t = {
+      gid : int option ;
+      id : int ;
+      ts: Time_ns.t ;
+      side: Side.t ;
+      price: float ;
+      qty: float ;
+    } [@@deriving sexp]
 
-  let create ?gid ~id ~ts ~side ~price ~qty () = {
-    gid ; id ; ts ; side ; price ; qty
-  }
+    let compare { price } { price = price' } = Float.compare price price'
 
-  let encoding =
-    let open Json_encoding in
-    let open Encoding in
-    conv
-      (fun _ -> invalid_arg "Trade.construct not implemented")
-      (fun (gid, id, date, side, price, qty, _total) ->
-         let ts = Time_ns.(add date (Span.of_int_ns id)) in
-         { gid ; id ; ts ; side ; price ; qty })
-      (obj7
-         (opt "globalTradeID" string_int_or_int)
-         (req "tradeID" string_int_or_int)
-         (req "date" date)
-         (req "type" Side.encoding)
-         (req "rate" string_float)
-         (req "amount" string_float)
-         (req "total" string_float))
+    let create ?gid ~id ~ts ~side ~price ~qty () = {
+      gid ; id ; ts ; side ; price ; qty
+    }
+
+    let encoding =
+      let open Json_encoding in
+      let open Encoding in
+      conv
+        (fun _ -> invalid_arg "Trade.construct not implemented")
+        (fun (gid, id, date, side, price, qty, _total) ->
+           let ts = Time_ns.(add date (Span.of_int_ns id)) in
+           { gid ; id ; ts ; side ; price ; qty })
+        (obj7
+           (opt "globalTradeID" string_int_or_int)
+           (req "tradeID" string_int_or_int)
+           (req "date" date)
+           (req "type" Side.encoding)
+           (req "rate" string_float)
+           (req "amount" string_float)
+           (req "total" string_float))
+  end
+  include T
+  include Comparable.Make(T)
 end
 
-module Book = struct
-  type entry = {
-    side : Side.t ;
-    price : float ;
-    qty : float ;
-  } [@@deriving sexp]
+module BookEntry = struct
+  module T = struct
+    type t = {
+      side : Side.t ;
+      price : float ;
+      qty : float ;
+    } [@@deriving sexp]
 
-  let create_entry ~side ~price ~qty = { side ; price ; qty }
+    let compare { price } { price = price' } = Float.compare price price'
 
-  let encoding =
-    let open Json_encoding in
-    conv
-      (fun { price ; side ; qty } ->
-         let qty = if qty = 0. then None else Some qty in
-         (price, side, qty))
-      (fun (price, side, qty) ->
-         { price ; side ; qty = Option.value ~default:0. qty })
-      (obj3
-         (req "rate" float)
-         (req "type" Side.encoding)
-         (opt "amount" float))
+    let create ~side ~price ~qty = { side ; price ; qty }
+
+    let encoding =
+      let open Json_encoding in
+      conv
+        (fun { price ; side ; qty } ->
+           let qty = if qty = 0. then None else Some qty in
+           (price, side, qty))
+        (fun (price, side, qty) ->
+           { price ; side ; qty = Option.value ~default:0. qty })
+        (obj3
+           (req "rate" float)
+           (req "type" Side.encoding)
+           (opt "amount" float))
+  end
+  include T
+  include Comparable.Make(T)
 end
 
 let flstring = Json_encoding.(Float.(conv to_string of_string string))

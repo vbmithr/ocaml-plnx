@@ -47,6 +47,8 @@ module Trade : sig
     qty : float ;
   } [@@deriving sexp]
 
+  include Comparable.S with type t := t
+
   val create :
     ?gid:int -> id:int -> ts:Time_ns.t -> side:Side.t ->
     price:float -> qty:float -> unit -> t
@@ -54,16 +56,18 @@ module Trade : sig
   val encoding : t Json_encoding.encoding
 end
 
-module Book : sig
-  type entry = {
+module BookEntry : sig
+  type t = {
     side : Side.t ;
     price : float ;
     qty : float ;
   } [@@deriving sexp]
 
-  val create_entry : side:Side.t -> price:float -> qty:float -> entry
+  include Comparable.S with type t := t
 
-  val encoding : entry Json_encoding.encoding
+  val create : side:Side.t -> price:float -> qty:float -> t
+
+  val encoding : t Json_encoding.encoding
 end
 
 val margin_enabled : string -> bool

@@ -7,8 +7,8 @@ module Msg : sig
   type t =
     | Ticker of Ticker.t
     | Trade of Trade.t
-    | BookModify of Book.entry
-    | BookRemove of Book.entry
+    | BookModify of BookEntry.t
+    | BookRemove of BookEntry.t
 
   val of_element : Wamp.Element.t -> t
 end

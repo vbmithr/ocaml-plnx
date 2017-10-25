@@ -88,8 +88,8 @@ module Msg = struct
   type t =
     | Ticker of Ticker.t
     | Trade of Trade.t
-    | BookModify of Book.entry
-    | BookRemove of Book.entry
+    | BookModify of BookEntry.t
+    | BookRemove of BookEntry.t
 
   let map_of_dict = function
     | Wamp.Element.Dict elts ->
@@ -137,7 +137,7 @@ module Msg = struct
       let side = Side.of_string side in
       let price = Float.of_string price in
       let qty = Option.value_map qty ~default:0. ~f:Float.of_string in
-      Book.create_entry ~side ~price ~qty
+      BookEntry.create ~side ~price ~qty
     with _ -> invalid_arg "read_book"
 
   let of_element e =

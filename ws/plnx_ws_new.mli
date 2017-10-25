@@ -12,7 +12,7 @@ module Repr : sig
 
   type event =
     | Snapshot of snapshot
-    | Update of Book.entry
+    | Update of BookEntry.t
     | Trade of Trade.t
   [@@deriving sexp]
 
