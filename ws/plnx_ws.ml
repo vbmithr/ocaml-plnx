@@ -33,7 +33,8 @@ module Backend_msgpck = struct
     Buffer.add_bytes outbuf msg_size ;
     let nb_written = to_repr msg |> Msgpck.StringBuf.write outbuf in
     let serialized_msg = Buffer.contents outbuf in
-    Binary_packing.pack_unsigned_32_int_big_endian serialized_msg 0 nb_written;
+    let serialized_msg_bytes = Buffer.to_bytes outbuf in
+    Binary_packing.pack_unsigned_32_int_big_endian serialized_msg_bytes 0 nb_written;
     Option.iter log ~f:(fun log -> Log.debug log "[WS] -> %S" serialized_msg) ;
     Pipe.write w serialized_msg
 
@@ -94,7 +95,7 @@ module Msg = struct
   let map_of_dict = function
     | Wamp.Element.Dict elts ->
       List.fold_left elts
-        ~init:String.Map.empty ~f:(fun a (k, v) -> String.Map.add a k v)
+        ~init:String.Map.empty ~f:(fun a (k, v) -> String.Map.set a k v)
     | _ -> invalid_arg "map_of_dict"
 
   let read_ticker = function
@@ -181,6 +182,7 @@ module Make (B : BACKEND) = struct
     let host = Option.value_exn ~message:"no host in uri" Uri.(host uri) in
     let port = Option.value_exn ~message:"no port inferred from scheme"
         Uri_services.(tcp_port_of_uri uri) in
+    let endp = Host_and_port.create ~host ~port in
     let scheme =
       Option.value_exn ~message:"no scheme in uri" Uri.(scheme uri) in
     let outbuf = Buffer.create 4096 in
@@ -237,7 +239,7 @@ module Make (B : BACKEND) = struct
     in
     let rec loop () = begin
       Monitor.try_with_or_error ~name:"PNLX.Ws.open_connection"
-        (fun () -> Tcp.(with_connection (to_host_and_port host port) tcp_fun)) >>| function
+        (fun () -> Tcp.(with_connection (Where_to_connect.of_host_and_port endp) tcp_fun)) >>| function
       | Ok () ->
         Option.iter log ~f:(fun log ->
             Log.error log "[WS] connection to %s terminated" uri_str)

@@ -155,7 +155,7 @@ let plnx =
     don't_wait_for @@ plnx key secret topics;
     never_returns @@ Scheduler.go ()
   in
-  Command.basic ~summary:"Poloniex WS client" base_spec run
+  Command.basic_spec ~summary:"Poloniex WS client" base_spec run
 
 (* let plnx_trades symbol = *)
 (*   let r = Rest.all_trades_exn *)

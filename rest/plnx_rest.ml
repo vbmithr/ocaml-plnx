@@ -88,7 +88,12 @@ let sign ~key ~secret ~data =
   incr latest_nonce ;
   let data = ("nonce", [Int.to_string nonce]) :: data in
   let prehash = Uri.encoded_of_query data in
-  let signature = SHA512.(to_hex (hmac ~key:secret prehash)) in
+  let prehash_bytes = Bytes.unsafe_of_string_promise_no_mutation prehash in
+  let secret = Bytes.unsafe_of_string_promise_no_mutation secret in
+  let signature =
+    Bytes.unsafe_to_string
+      ~no_mutation_while_string_reachable:
+        SHA512.(to_hex (hmac ~key:secret prehash_bytes)) in
   prehash,
   Cohttp.Header.of_list [
     "content-type", "application/x-www-form-urlencoded";

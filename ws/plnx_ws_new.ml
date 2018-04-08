@@ -30,7 +30,7 @@ module Repr = struct
   let book_of_yojson book =
     let open Float in
     List.fold_left book ~init:Map.empty ~f:begin fun a -> function
-      | price, `String qty -> Map.add a (of_string price) (of_string qty)
+      | price, `String qty -> Map.set a (of_string price) (of_string qty)
       | _ -> invalid_arg "Plnx_ws_new.book_of_yojson"
     end
 
@@ -82,6 +82,7 @@ let open_connection
   let host = Option.value_exn ~message:"no host in uri" Uri.(host uri) in
   let port = Option.value_exn ~message:"no port inferred from scheme"
       Uri_services.(tcp_port_of_uri uri) in
+  let endp = Host_and_port.create ~host ~port in
   let scheme =
     Option.value_exn ~message:"no scheme in uri" Uri.(scheme uri) in
   let rec loop_write mvar msg =
@@ -142,7 +143,7 @@ let open_connection
   in
   let rec loop () = begin
     Monitor.try_with_or_error ~name:"Plnx_ws_new.open_connection"
-      (fun () -> Tcp.(with_connection (to_host_and_port host port) tcp_fun)) >>| function
+      (fun () -> Tcp.(with_connection (Where_to_connect.of_host_and_port endp) tcp_fun)) >>| function
     | Ok () ->
       Option.iter log ~f:(fun log ->
           Log.error log "[WS] connection to %s terminated" uri_str)
