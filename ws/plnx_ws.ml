@@ -179,12 +179,6 @@ module Make (B : BACKEND) = struct
       to_ws =
     let uri_str = "https://api.poloniex.com" in
     let uri = Uri.of_string uri_str in
-    let host = Option.value_exn ~message:"no host in uri" Uri.(host uri) in
-    let port = Option.value_exn ~message:"no port inferred from scheme"
-        Uri_services.(tcp_port_of_uri uri) in
-    let endp = Host_and_port.create ~host ~port in
-    let scheme =
-      Option.value_exn ~message:"no scheme in uri" Uri.(scheme uri) in
     let outbuf = Buffer.create 4096 in
     let rec loop_write mvar msg =
       Mvar.value_available mvar >>= fun () ->
@@ -211,15 +205,9 @@ module Make (B : BACKEND) = struct
       B.write log outbuf w hello >>= fun () ->
       Pipe.transfer' r client_w (B.transfer log)
     in
-    let tcp_fun s r w =
-      Socket.(setopt s Opt.nodelay true);
-      begin
-        if scheme = "https" || scheme = "wss" then
-          Conduit_async_ssl.(ssl_connect (Ssl_config.configure ~version:Tlsv1_2 ()) r w)
-        else return (r, w)
-      end >>= fun (ssl_r, ssl_w) ->
+    let tcp_fun (r, w) =
       let ws_r, ws_w = Websocket_async.client_ez ?log:log_ws
-          ~opcode:Binary ~extra_headers:B.headers ~heartbeat uri s ssl_r ssl_w
+          ~opcode:Binary ~extra_headers:B.headers ~heartbeat uri r w
       in
       let cleanup r w ws_r ws_w =
         Pipe.close_read ws_r ;
@@ -232,14 +220,15 @@ module Make (B : BACKEND) = struct
       don't_wait_for begin
         Deferred.all_unit
           [ Reader.close_finished r ; Writer.close_finished w ] >>= fun () ->
-        cleanup ssl_r ssl_w ws_r ws_w
+        cleanup r w ws_r ws_w
       end ;
       Mvar.set ws_w_mvar ws_w ;
       process_ws ws_r ws_w
     in
     let rec loop () = begin
       Monitor.try_with_or_error ~name:"PNLX.Ws.open_connection"
-        (fun () -> Tcp.(with_connection (Where_to_connect.of_host_and_port endp) tcp_fun)) >>| function
+        (fun () -> Bmex_common.addr_of_uri uri >>= fun addr ->
+          Conduit_async.V2.connect addr >>= tcp_fun) >>| function
       | Ok () ->
         Option.iter log ~f:(fun log ->
             Log.error log "[WS] connection to %s terminated" uri_str)

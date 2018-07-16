@@ -6,6 +6,7 @@
               core
               async
               cohttp
+              bmex-common
               wamp-msgpck
               wamp-yojson
               websocket-async))))
@@ -18,4 +19,5 @@
   (libraries (plnx
               core
               async
+              bmex-common
               websocket-async))))

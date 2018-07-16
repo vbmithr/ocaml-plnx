@@ -79,12 +79,6 @@ let open_connection
   let buf = Bi_outbuf.create 1024 in
   let uri_str = "https://api2.poloniex.com" in
   let uri = Uri.of_string uri_str in
-  let host = Option.value_exn ~message:"no host in uri" Uri.(host uri) in
-  let port = Option.value_exn ~message:"no port inferred from scheme"
-      Uri_services.(tcp_port_of_uri uri) in
-  let endp = Host_and_port.create ~host ~port in
-  let scheme =
-    Option.value_exn ~message:"no scheme in uri" Uri.(scheme uri) in
   let rec loop_write mvar msg =
     Mvar.value_available mvar >>= fun () ->
     let w = Mvar.peek_exn mvar in
@@ -116,16 +110,10 @@ let open_connection
       Writer.close w ;
     ] in
 
-  let tcp_fun s r w =
+  let tcp_fun (r, w) =
     Option.iter connected ~f:(fun c -> Condition.broadcast c ()) ;
-    Socket.(setopt s Opt.nodelay true);
-    begin
-      if scheme = "https" || scheme = "wss" then
-        Conduit_async_ssl.(ssl_connect (Ssl_config.configure ~version:Tlsv1_2 ()) r w)
-      else return (r, w)
-    end >>= fun (ssl_r, ssl_w) ->
     let ws_r, ws_w = Websocket_async.client_ez ?log:log_ws
-        ~opcode:Text ~heartbeat uri s ssl_r ssl_w
+        ~opcode:Text ~heartbeat uri r w
     in
     don't_wait_for begin
       Deferred.all_unit
@@ -133,7 +121,7 @@ let open_connection
           Writer.close_finished w ;
           Condition.wait restart ;
         ] >>= fun () ->
-      cleanup ssl_r ssl_w ws_r ws_w
+      cleanup r w ws_r ws_w
     end ;
     Mvar.set ws_w_mvar ws_w ;
     Option.iter log ~f:(fun log -> Log.info log "[WS] connected to %s" uri_str);
@@ -143,7 +131,9 @@ let open_connection
   in
   let rec loop () = begin
     Monitor.try_with_or_error ~name:"Plnx_ws_new.open_connection"
-      (fun () -> Tcp.(with_connection (Where_to_connect.of_host_and_port endp) tcp_fun)) >>| function
+      (fun () ->
+         Bmex_common.addr_of_uri uri >>= fun addr ->
+         Conduit_async.V2.connect addr >>= tcp_fun) >>| function
     | Ok () ->
       Option.iter log ~f:(fun log ->
           Log.error log "[WS] connection to %s terminated" uri_str)
