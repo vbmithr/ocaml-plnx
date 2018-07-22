@@ -33,7 +33,7 @@ module Backend_msgpck = struct
     Buffer.add_bytes outbuf msg_size ;
     let nb_written = to_repr msg |> Msgpck.StringBuf.write outbuf in
     let serialized_msg = Buffer.contents outbuf in
-    let serialized_msg_bytes = Buffer.to_bytes outbuf in
+    let serialized_msg_bytes = Buffer.contents_bytes outbuf in
     Binary_packing.pack_unsigned_32_int_big_endian serialized_msg_bytes 0 nb_written;
     Option.iter log ~f:(fun log -> Log.debug log "[WS] -> %S" serialized_msg) ;
     Pipe.write w serialized_msg
