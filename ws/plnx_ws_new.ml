@@ -54,7 +54,14 @@ module Repr = struct
       let price = Float.of_string price in
       let qty = Float.of_string qty in
       let side = side_of_int side in
-      let ts = Time_ns.of_int_ns_since_epoch (ts * 1_000_000_000) in
+      let ts = Time_ns.of_int63_ns_since_epoch Int63.(of_int ts * of_int 1_000_000_000) in
+      Trade (Trade.create ~id ~ts ~side ~price ~qty ())
+    | `List [`String "t" ; `String id ; `Int side ; `String price ; `String qty ; `Intlit ts ] ->
+      let id = Int.of_string id in
+      let price = Float.of_string price in
+      let qty = Float.of_string qty in
+      let side = side_of_int side in
+      let ts = Time_ns.of_int63_ns_since_epoch Int63.(of_string ts * of_int 1_000_000_000) in
       Trade (Trade.create ~id ~ts ~side ~price ~qty ())
     | #Yojson.Safe.json as json ->
       invalid_argf "Repr.event_of_yojson: %s" (Yojson.Safe.to_string json) ()
