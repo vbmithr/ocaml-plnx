@@ -79,12 +79,14 @@ let safe_get ?buf ?log url =
     | exn -> Cohttp exn
   end
 
-let latest_nonce = ref (Time_ns.(now () |> to_int_ns_since_epoch) / 1_000)
+let latest_nonce =
+  let open Int63 in
+  ref (Time_ns.(to_int63_ns_since_epoch (now ())) / of_int 1_000)
 
 let sign ~key ~secret ~data =
   let nonce = !latest_nonce in
-  incr latest_nonce ;
-  let data = ("nonce", [Int.to_string nonce]) :: data in
+  Int63.incr latest_nonce ;
+  let data = ("nonce", [Int63.to_string nonce]) :: data in
   let prehash = Uri.encoded_of_query data in
   let signature =
     Digestif.SHA512.(to_hex (hmac_string ~key:secret prehash)) in
@@ -217,11 +219,13 @@ let fold_trades_exn ?log w decoder (nb_decoded, name, tmp) chunk =
   in
   decode nb_decoded name tmp
 
-let int_of_ts ts = Time_ns.to_int_ns_since_epoch ts / 1_000_000_000
+let int63_of_ts ts =
+  let open Int63 in
+  (Time_ns.to_int63_ns_since_epoch ts) / of_int 1_000_000_000
 
 let trades ?log ?start_ts ?end_ts symbol =
-  let start_ts_sec = Option.map start_ts ~f:(Fn.compose Int.to_string int_of_ts) in
-  let end_ts_sec = Option.map end_ts ~f:(Fn.compose Int.to_string int_of_ts) in
+  let start_ts_sec = Option.map start_ts ~f:(Fn.compose Int63.to_string int63_of_ts) in
+  let end_ts_sec = Option.map end_ts ~f:(Fn.compose Int63.to_string int63_of_ts) in
   let url = Uri.add_query_params' base_url @@ List.filter_opt Option.[
       some ("command", "returnTradeHistory");
       some ("currencyPair", symbol);
@@ -709,10 +713,10 @@ let trade_history ?buf ?log ?(symbol="all") ?start ?stop ~key ~secret () =
       Some ("command", ["returnTradeHistory"]);
       Some ("currencyPair", [symbol]);
       Option.map start ~f:begin fun ts ->
-        "start", [Int.to_string @@ Time_ns.to_int_ns_since_epoch ts / 1_000_000_000]
+        "start", [Int63.to_string (int63_of_ts ts)]
       end ;
       Option.map stop ~f:begin fun ts ->
-        "end", [Int.to_string @@ Time_ns.to_int_ns_since_epoch ts / 1_000_000_000]
+        "end", [Int63.to_string (int63_of_ts ts)]
       end ;
     ] in
   let map_f = Yojson_encoding.destruct_safe TradeHistory.encoding in
