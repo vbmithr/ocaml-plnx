@@ -42,6 +42,10 @@ module Repr = struct
   let event_of_yojson = function
     | `List [`String "i" ;
              `Assoc ["currencyPair", `String symbol ;
+                     "orderBook", `List [`List [] ; `List []]]] ->
+      Snapshot { symbol ; bid = Float.Map.empty ; ask = Float.Map.empty }
+    | `List [`String "i" ;
+             `Assoc ["currencyPair", `String symbol ;
                      "orderBook", `List [`Assoc ask ; `Assoc bid]]] ->
       Snapshot { symbol ; bid = book_of_yojson bid ; ask = book_of_yojson ask }
     | `List [`String "o" ; `Int side ; `String price ; `String qty ] ->
