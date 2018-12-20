@@ -290,13 +290,7 @@ module Currency = struct
 
   let encoding =
     let open Json_encoding in
-    conv
-      (fun { id ; name ; txFee ; minConf ; depositAddress ;
-             disabled ; delisted ; frozen } ->
-        id, name, txFee, minConf, depositAddress, disabled, delisted, frozen)
-      (fun (id, name, txFee, minConf, depositAddress, disabled, delisted, frozen) ->
-         { id ; name ; txFee ; minConf ; depositAddress ;
-           disabled ; delisted ; frozen })
+    let encoding =
       (obj8
          (req "id" int)
          (req "name" string)
@@ -305,7 +299,15 @@ module Currency = struct
          (req "depositAddress" (option string))
          (req "disabled" int)
          (req "delisted" int)
-         (req "frozen" int))
+         (req "frozen" int)) in
+    conv
+      (fun { id ; name ; txFee ; minConf ; depositAddress ;
+             disabled ; delisted ; frozen } ->
+        ((), (id, name, txFee, minConf, depositAddress, disabled, delisted, frozen)))
+      (fun ((), (id, name, txFee, minConf, depositAddress, disabled, delisted, frozen)) ->
+         { id ; name ; txFee ; minConf ; depositAddress ;
+           disabled ; delisted ; frozen })
+      (merge_objs unit encoding)
 end
 
 let currencies ?buf ?log () =
