@@ -1,6 +1,0 @@
-(executable
- ((name ws)
-  (public_name plnx-cli)
-  (package plnx-cli)
-  (preprocess (pps (ppx_sexp_conv)))
-  (libraries (plnx-rest plnx-ws-new))))

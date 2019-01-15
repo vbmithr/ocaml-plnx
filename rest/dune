@@ -1,0 +1,14 @@
+(library
+ (name        plnx_rest)
+ (public_name plnx-rest)
+ (modules plnx_rest)
+ (preprocess (pps ppx_sexp_conv))
+ (libraries
+  plnx
+  core
+  async
+  yojson
+  jsonm
+  digestif.c
+  ocplib-json-typed
+  cohttp-async))
