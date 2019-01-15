@@ -3,6 +3,9 @@ open Async
 
 open Plnx
 
+let src = Logs.Src.create "plnx.ws"
+    ~doc:"Poloniex API - Websocket library"
+
 module Repr = struct
   type snapshot = {
     symbol : string ;
@@ -82,19 +85,18 @@ end
 
 let open_connection
     ?(heartbeat=Time_ns.Span.of_int_sec 25)
-    ?log_ws
-    ?log
     ?connected
     ?disconnected
     to_ws =
   let buf = Bi_outbuf.create 1024 in
-  let uri_str = "https://api2.poloniex.com" in
-  let uri = Uri.of_string uri_str in
+  let uri = Uri.make ~scheme:"https" ~host:"api2.poloniex.com" () in
   let rec loop_write mvar msg =
     Mvar.value_available mvar >>= fun () ->
     let w = Mvar.peek_exn mvar in
     if Pipe.is_closed w then begin
-      Option.iter log ~f:(fun log -> Log.error log "loop_write: Pipe to websocket closed");
+      Logs_async.err ~src begin fun m ->
+        m "loop_write: Pipe to websocket closed"
+      end >>= fun () ->
       Mvar.take mvar >>= fun _ ->
       loop_write mvar msg
     end
@@ -109,7 +111,7 @@ let open_connection
   Monitor.handle_errors begin fun () ->
     Pipe.iter ~continue_on_error:true to_ws ~f:(loop_write ws_w_mvar_ro)
   end
-    (fun exn -> Option.iter log ~f:(fun log -> Log.error  log "%s" @@ Exn.to_string exn));
+    (fun exn -> Logs.err ~src (fun m -> m "%a" Exn.pp exn));
   let client_r, client_w = Pipe.create () in
   let restart = Condition.create () in
 
@@ -123,7 +125,7 @@ let open_connection
 
   let tcp_fun (r, w) =
     Option.iter connected ~f:(fun c -> Condition.broadcast c ()) ;
-    let ws_r, ws_w = Websocket_async.client_ez ?log:log_ws
+    let ws_r, ws_w = Websocket_async.client_ez
         ~opcode:Text ~heartbeat uri r w
     in
     don't_wait_for begin
@@ -135,7 +137,9 @@ let open_connection
       cleanup r w ws_r ws_w
     end ;
     Mvar.set ws_w_mvar ws_w ;
-    Option.iter log ~f:(fun log -> Log.info log "[WS] connected to %s" uri_str);
+    Logs_async.info ~src begin fun m ->
+      m "connected to %a" Uri.pp_hum uri
+    end >>= fun () ->
     Pipe.transfer ws_r client_w ~f:begin fun str ->
       Repr.of_yojson (Yojson.Safe.from_string ~buf str)
     end
@@ -144,19 +148,22 @@ let open_connection
     Monitor.try_with_or_error ~name:"Plnx_ws_new.open_connection"
       (fun () ->
          Bmex_common.addr_of_uri uri >>= fun addr ->
-         Conduit_async.V2.connect addr >>= tcp_fun) >>| function
+         Conduit_async.V2.connect addr >>= tcp_fun) >>= function
     | Ok () ->
-      Option.iter log ~f:(fun log ->
-          Log.error log "[WS] connection to %s terminated" uri_str)
+      Logs_async.err ~src begin fun m ->
+        m "connection to %a terminated" Uri.pp_hum uri
+      end
     | Error err ->
-      Option.iter log ~f:(fun log ->
-          Log.error log "[WS] connection to %s raised %s" uri_str (Error.to_string_hum err))
+      Logs_async.err ~src begin fun m ->
+        m "connection to %a raised %a" Uri.pp_hum uri Error.pp err
+      end
   end >>= fun () ->
     Option.iter disconnected ~f:(fun c -> Condition.broadcast c ()) ;
     if Pipe.is_closed client_r then Deferred.unit
     else begin
-      Option.iter log ~f:(fun log ->
-          Log.error log "[WS] restarting connection to %s" uri_str);
+      Logs_async.err ~src begin fun m ->
+        m "restarting connection to %a" Uri.pp_hum uri
+      end >>= fun () ->
       Clock_ns.after @@ Time_ns.Span.of_int_sec 10 >>=
       loop
     end

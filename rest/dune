@@ -11,4 +11,5 @@
   jsonm
   digestif.c
   ocplib-json-typed
+  logs-async
   cohttp-async))

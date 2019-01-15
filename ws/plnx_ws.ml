@@ -12,10 +12,10 @@ module type BACKEND = sig
     Cohttp.Header.t
 
   val write :
-    Log.t option -> Buffer.t -> string Pipe.Writer.t -> t -> unit Deferred.t
+    Buffer.t -> string Pipe.Writer.t -> t -> unit Deferred.t
 
   val transfer :
-    Log.t option -> string Queue.t -> t Queue.t Deferred.t
+    string Queue.t -> t Queue.t Deferred.t
 end
 
 module Backend_msgpck = struct
@@ -28,24 +28,29 @@ module Backend_msgpck = struct
 
   let msg_size = Bytes.create 4
 
-  let write log outbuf w msg =
+  let src = Logs.Src.create "plnx.ws.legacy.msgpack"
+      ~doc:"Poloniex API - LEGACY Websocket transport using Msgpack"
+
+  let write outbuf w msg =
     Buffer.clear outbuf;
     Buffer.add_bytes outbuf msg_size ;
     let nb_written = to_repr msg |> Msgpck.StringBuf.write outbuf in
     let serialized_msg = Buffer.contents outbuf in
     let serialized_msg_bytes = Buffer.to_bytes outbuf in
     Binary_packing.pack_unsigned_32_int_big_endian serialized_msg_bytes 0 nb_written;
-    Option.iter log ~f:(fun log -> Log.debug log "[WS] -> %S" serialized_msg) ;
+    Logs_async.debug ~src begin fun m ->
+      m "-> %S" serialized_msg
+    end >>= fun () ->
     Pipe.write w serialized_msg
 
-  let transfer log q =
+  let transfer q =
     let res = Queue.create () in
     let rec read_loop pos msg_str =
       if pos < String.length msg_str then
         let nb_read, msg = Msgpck.String.read ~pos:(pos+4) msg_str in
         match of_repr msg with
         | Ok msg -> Queue.enqueue res msg; read_loop (pos+4+nb_read) msg_str
-        | Error msg -> Option.iter log ~f:(fun log -> Log.error log "%s" msg)
+        | Error msg -> Logs.err ~src (fun m -> m "%s" msg)
     in
     Queue.iter q ~f:(read_loop 0);
     return res
@@ -59,25 +64,28 @@ module Backend_yojson = struct
   let headers =
     Cohttp.Header.init_with "Sec-Websocket-Protocol" "wamp.2.json.batched"
 
-  let write log outbuf w msg =
+  let src = Logs.Src.create "plnx.ws.legacy.json"
+      ~doc:"Poloniex API - LEGACY Websocket transport using JSON"
+
+  let write outbuf w msg =
     Buffer.clear outbuf ;
     Buffer.add_string outbuf (to_repr msg |> Yojson.Safe.to_string) ;
     Buffer.add_char outbuf '\030' ;
     let contents = Buffer.contents outbuf in
-    Option.iter log ~f:(fun log -> Log.debug log "[WS] -> %S" contents) ;
+    Logs_async.debug ~src (fun m -> m "-> %S" contents) >>= fun () ->
     Pipe.write w (Buffer.contents outbuf)
 
-  let transfer log q =
+  let transfer q =
     let res = Queue.create () in
     Queue.iter q ~f:begin fun str ->
       let msgs = String.split str ~on:'\030' in
       List.iter msgs ~f:begin function
         | "" -> ()
         | msg ->
-          Option.iter log ~f:(fun log -> Log.debug log "<- %s" msg) ;
+          Logs.debug ~src (fun m -> m "<- %s" msg) ;
           match of_repr (Yojson.Safe.from_string msg) with
           | Ok msg -> Queue.enqueue res msg
-          | Error msg -> Option.iter log ~f:(fun log -> Log.error log "%s" msg)
+          | Error msg -> Logs.err ~src (fun m -> m "%s" msg)
       end
     end ;
     return res
@@ -160,6 +168,9 @@ module Msg = struct
   let book_remove entry = BookRemove entry
 end
 
+let src = Logs.Src.create "plnx.ws.legacy"
+    ~doc:"Poloniex API - LEGACY Websocket library"
+
 module Make (B : BACKEND) = struct
   include B
 
@@ -173,40 +184,42 @@ module Make (B : BACKEND) = struct
 
   let open_connection
       ?(heartbeat=Time_ns.Span.of_int_sec 25)
-      ?log_ws
-      ?log
       ?disconnected
       to_ws =
-    let uri_str = "https://api.poloniex.com" in
-    let uri = Uri.of_string uri_str in
+    let uri = Uri.make ~scheme:"https" ~host:"api.poloniex.com" () in
     let outbuf = Buffer.create 4096 in
     let rec loop_write mvar msg =
       Mvar.value_available mvar >>= fun () ->
       let w = Mvar.peek_exn mvar in
       if Pipe.is_closed w then begin
-        Option.iter log ~f:(fun log -> Log.error log "loop_write: Pipe to websocket closed");
+        Logs_async.err ~src begin fun m ->
+          m "loop_write: Pipe to websocket closed"
+        end >>= fun () ->
         Mvar.take mvar >>= fun _ ->
         loop_write mvar msg
       end
-      else B.write log outbuf w msg
+      else B.write outbuf w msg
     in
     let ws_w_mvar = Mvar.create () in
     let ws_w_mvar_ro = Mvar.read_only ws_w_mvar in
     don't_wait_for @@
     Monitor.handle_errors begin fun () ->
       Pipe.iter ~continue_on_error:true to_ws ~f:(loop_write ws_w_mvar_ro)
-    end
-      (fun exn -> Option.iter log ~f:(fun log -> Log.error  log "%s" @@ Exn.to_string exn));
+    end begin fun exn ->
+      Logs.err ~src (fun m -> m "%a" Exn.pp exn)
+    end ;
     let client_r, client_w = Pipe.create () in
     let process_ws r w =
       (* Initialize *)
-      Option.iter log ~f:(fun log -> Log.info log "[WS] connected to %s" uri_str);
+      Logs_async.info ~src begin fun m ->
+        m "connected to %a" Uri.pp_hum uri
+      end >>= fun () ->
       let hello = EZ.(hello (Uri.of_string "realm1") [Subscriber]) in
-      B.write log outbuf w hello >>= fun () ->
-      Pipe.transfer' r client_w (B.transfer log)
+      B.write outbuf w hello >>= fun () ->
+      Pipe.transfer' r client_w B.transfer
     in
     let tcp_fun (r, w) =
-      let ws_r, ws_w = Websocket_async.client_ez ?log:log_ws
+      let ws_r, ws_w = Websocket_async.client_ez
           ~opcode:Binary ~extra_headers:B.headers ~heartbeat uri r w
       in
       let cleanup r w ws_r ws_w =
@@ -228,19 +241,22 @@ module Make (B : BACKEND) = struct
     let rec loop () = begin
       Monitor.try_with_or_error ~name:"PNLX.Ws.open_connection"
         (fun () -> Bmex_common.addr_of_uri uri >>= fun addr ->
-          Conduit_async.V2.connect addr >>= tcp_fun) >>| function
+          Conduit_async.V2.connect addr >>= tcp_fun) >>= function
       | Ok () ->
-        Option.iter log ~f:(fun log ->
-            Log.error log "[WS] connection to %s terminated" uri_str)
+        Logs_async.err ~src begin fun m ->
+          m "connection to %a terminated" Uri.pp_hum uri
+        end
       | Error err ->
-        Option.iter log ~f:(fun log ->
-            Log.error log "[WS] connection to %s raised %s" uri_str (Error.to_string_hum err))
+        Logs_async.err ~src begin fun m ->
+          m "connection to %a raised %a" Uri.pp_hum uri Error.pp err
+        end
     end >>= fun () ->
       if Pipe.is_closed client_r then Deferred.unit
       else begin
         Option.iter disconnected ~f:(fun c -> Condition.broadcast c ()) ;
-        Option.iter log ~f:(fun log ->
-            Log.error log "[WS] restarting connection to %s" uri_str);
+        Logs_async.err ~src begin fun m ->
+          m "restarting connection to %a" Uri.pp_hum uri
+        end >>= fun () ->
         Clock_ns.after @@ Time_ns.Span.of_int_sec 10 >>=
         loop
       end
@@ -255,8 +271,6 @@ module type S = sig
 
   val open_connection :
     ?heartbeat:Time_ns.Span.t ->
-    ?log_ws:Log.t ->
-    ?log:Log.t ->
     ?disconnected:unit Condition.t ->
     t Pipe.Reader.t ->
     t Pipe.Reader.t

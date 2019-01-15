@@ -19,8 +19,6 @@ module type S = sig
 
   val open_connection :
     ?heartbeat:Time_ns.Span.t ->
-    ?log_ws:Log.t ->
-    ?log:Log.t ->
     ?disconnected:unit Condition.t ->
     t Pipe.Reader.t ->
     t Pipe.Reader.t

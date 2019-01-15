@@ -30,8 +30,6 @@ end
 
 val open_connection :
   ?heartbeat:Time_ns.Span.t ->
-  ?log_ws:Log.t ->
-  ?log:Log.t ->
   ?connected:unit Condition.t ->
   ?disconnected:unit Condition.t ->
   Repr.command Pipe.Reader.t ->

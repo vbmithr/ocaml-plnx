@@ -9,6 +9,7 @@
   bmex-common
   wamp-msgpck
   wamp-yojson
+  logs-async
   websocket-async))
 
 (library
@@ -20,4 +21,5 @@
   core
   async
   bmex-common
+  logs-async
   websocket-async))
