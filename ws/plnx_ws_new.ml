@@ -1,6 +1,7 @@
 open Core
 open Async
 
+open Bs_devkit
 open Plnx
 
 let src = Logs.Src.create "plnx.ws"
@@ -147,7 +148,7 @@ let open_connection
   let rec loop () = begin
     Monitor.try_with_or_error ~name:"Plnx_ws_new.open_connection"
       (fun () ->
-         Bmex_common.addr_of_uri uri >>= fun addr ->
+         addr_of_uri uri >>= fun addr ->
          Conduit_async.V2.connect addr >>= tcp_fun) >>= function
     | Ok () ->
       Logs_async.err ~src begin fun m ->

@@ -1,6 +1,7 @@
 open Core
 open Async
 
+open Bs_devkit
 open Plnx
 
 module type BACKEND = sig
@@ -240,7 +241,7 @@ module Make (B : BACKEND) = struct
     in
     let rec loop () = begin
       Monitor.try_with_or_error ~name:"PNLX.Ws.open_connection"
-        (fun () -> Bmex_common.addr_of_uri uri >>= fun addr ->
+        (fun () -> addr_of_uri uri >>= fun addr ->
           Conduit_async.V2.connect addr >>= tcp_fun) >>= function
       | Ok () ->
         Logs_async.err ~src begin fun m ->
