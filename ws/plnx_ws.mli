@@ -28,4 +28,4 @@ module type S = sig
 end
 
 module M : S with type repr := Msgpck.t
-module J : S with type repr := Yojson.Safe.json
+module J : S with type repr := Yojson.Safe.t

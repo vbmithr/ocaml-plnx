@@ -20,8 +20,6 @@ exception ClientError of string
 exception ServerError of string
 exception PoloniexError of string
 
-let ssl_config = Conduit_async.Ssl.configure ~version:Tlsv1_2 ()
-
 let src = Logs.Src.create "plnx.rest"
       ~doc:"Poloniex API - REST interface"
 
@@ -33,15 +31,6 @@ module Http_error = struct
     | Poloniex of string
     | Data_encoding of string
     | Data_shape of string
-
-  let poloniex_str msg = Poloniex msg
-  let poloniex k =
-    Format.kasprintf (fun msg -> Poloniex msg) k
-
-  let poloniex_fail msg = Result.fail (Poloniex msg)
-
-  let poloniex_failf k =
-    Format.kasprintf (fun msg -> Result.fail (Poloniex msg)) k
 
   let data_encoding exn =
     let msg =
@@ -64,7 +53,7 @@ end
 
 let safe_get ?buf url =
   Monitor.try_with ~extract_exn:true begin fun () ->
-    Client.get ~ssl_config url >>= fun (resp, body) ->
+    Client.get url >>= fun (resp, body) ->
     let status_code = Cohttp.Code.code_of_status resp.status in
     Body.to_string body >>= fun body_str ->
     Logs_async.debug ~src (fun m -> m "%s" body_str) >>| fun () ->
@@ -76,7 +65,7 @@ let safe_get ?buf url =
     else match body_json with
       | `Assoc ["error", `String msg] ->
         raise (PoloniexError msg)
-      | #Yojson.Safe.json as json ->
+      | #Yojson.Safe.t as json ->
         json
   end >>| Result.map_error ~f:begin function
     | ClientError str -> Http_error.Client str
@@ -107,7 +96,7 @@ let safe_post ?buf ~key ~secret ~data url =
   let body, headers = sign ~key ~secret ~data in
   let body = Body.of_string body in
   Monitor.try_with ~extract_exn:true begin fun () ->
-    Client.post ~ssl_config ~headers ~body url >>= fun (resp, body) ->
+    Client.post ~headers ~body url >>= fun (resp, body) ->
     let status_code = Cohttp.Code.code_of_status resp.status in
     Body.to_string body >>= fun body_str ->
     Logs_async.debug ~src (fun m -> m "%s" body_str) >>| fun () ->
@@ -117,7 +106,7 @@ let safe_post ?buf ~key ~secret ~data url =
       if Cohttp.Code.is_client_error status_code then raise (ClientError msg)
       else if Cohttp.Code.is_server_error status_code then raise (ServerError msg)
       else raise (PoloniexError msg)
-    | #Yojson.Safe.json as json ->
+    | #Yojson.Safe.t as json ->
       if Cohttp.Code.is_client_error status_code then raise (ClientError body_str)
       else if Cohttp.Code.is_server_error status_code then raise (ServerError body_str)
       else json
@@ -137,16 +126,16 @@ let tickers ?buf () =
     | `Assoc tickers ->
       begin try
           Ok (List.rev_map tickers ~f:begin fun (symbol, t) ->
-              Yojson_encoding.destruct_safe (Ticker.encoding symbol) t
+              Yojson_encoding.destruct_safe (Ticker.encoding ~symbol) t
             end)
         with exn -> Http_error.data_encoding exn
       end
-    | #Yojson.Safe.json -> Http_error.data_shape "expected object"
+    | #Yojson.Safe.t -> Http_error.data_shape "expected object"
   end
 
 let ticker ?buf symbol =
   tickers ?buf () >>|
-  Result.map ~f:(List.find ~f:(fun { Ticker.symbol = symbol' } -> symbol = symbol'))
+  Result.map ~f:(List.find ~f:(fun { Ticker.symbol = symbol' ; _ } -> symbol = symbol'))
 
 let bids_asks_of_yojson side records =
   List.map records ~f:(function
@@ -154,11 +143,11 @@ let bids_asks_of_yojson side records =
         BookEntry.create ~side ~price:(Float.of_string price) ~qty:(Int.to_float qty)
       | `List [`String price; `Float qty] ->
         BookEntry.create ~side ~price:(Float.of_string price) ~qty
-      | #Yojson.Safe.json -> invalid_arg "bids_asks_of_yojson")
+      | #Yojson.Safe.t -> invalid_arg "bids_asks_of_yojson")
 
 let bids_asks_of_yojson side = function
   | `List records -> bids_asks_of_yojson side records
-  | #Yojson.Safe.json -> invalid_arg "bids_asks_of_yojson"
+  | #Yojson.Safe.t -> invalid_arg "bids_asks_of_yojson"
 
 let bids_of_yojson = bids_asks_of_yojson `buy
 let asks_of_yojson = bids_asks_of_yojson `sell
@@ -174,10 +163,7 @@ module Books = struct
   let encoding =
     let open Json_encoding in
     conv
-      (fun { asks ; bids ; isFrozen ; seq } ->
-         Json_repr.(repr_to_any (module Yojson) `Null),
-         Json_repr.(repr_to_any (module Yojson) `Null),
-         isFrozen, seq)
+      (fun _ -> invalid_arg "unsupported")
       (fun (asks, bids, isFrozen, seq) ->
          let asks = Json_repr.(any_to_repr (module Yojson) asks) |> asks_of_yojson in
          let bids = Json_repr.(any_to_repr (module Yojson) bids) |> bids_of_yojson in
@@ -241,7 +227,7 @@ let trades ?start_ts ?end_ts symbol =
   let decoder = Jsonm.decoder `Manual in
   Logs_async.debug ~src (fun m -> m "GET %a" Uri.pp_hum url) >>= fun () ->
   Monitor.try_with ~extract_exn:true begin fun () ->
-    Client.get ~ssl_config url >>| fun (resp, body) ->
+    Client.get url >>| fun (resp, body) ->
     let status_code = Cohttp.Code.code_of_status resp.status in
     if Cohttp.Code.is_client_error status_code then raise (ClientError "<body>")
     else if Cohttp.Code.is_server_error status_code then raise (ServerError "<body>")
@@ -322,7 +308,7 @@ let currencies ?buf () =
             end)
         with exn -> Http_error.data_encoding exn
       end
-    | #Yojson.Safe.json -> Result.fail (Http_error.Poloniex "currencies")
+    | #Yojson.Safe.t -> Result.fail (Http_error.Poloniex "currencies")
   end
 
 let symbols ?buf () =
@@ -331,7 +317,7 @@ let symbols ?buf () =
                               "currencyPair", "all"; "depth", "0"] in
   safe_get ?buf url >>| Result.bind ~f:begin function
     | `Assoc syms -> Result.return @@ List.rev_map syms ~f:fst
-    | #Yojson.Safe.json -> Http_error.poloniex_fail "symbols"
+    | #Yojson.Safe.t -> Result.fail (Http_error.Poloniex "symbols")
   end
 
 module Balance = struct
@@ -364,7 +350,7 @@ let balances ?buf ?(all=true) ~key ~secret () =
           List.Assoc.map balances ~f:(Yojson_encoding.destruct_safe Balance.encoding)
         with exn -> Http_error.data_encoding exn
       end
-    | #Yojson.Safe.json -> Http_error.poloniex_fail "balances"
+    | #Yojson.Safe.t -> Result.fail (Http_error.Poloniex "balances")
   end
 
 module Account = struct
@@ -378,11 +364,6 @@ module Account = struct
     | "margin" -> Margin
     | "lending" -> Lending
     | s -> invalid_argf "account_of_string: %s" s ()
-
-  let to_string = function
-    | Exchange -> "exchange"
-    | Margin -> "margin"
-    | Lending -> "lending"
 end
 
 let positive_balances ?buf ~key ~secret () =
@@ -395,13 +376,13 @@ let positive_balances ?buf ~key ~secret () =
             | account, `Assoc bs ->
               Account.of_string account, List.Assoc.map bs ~f:begin function
                 | `String bal -> Float.of_string bal
-                | json -> raise Exit
+                | #Yojson.Safe.t -> raise Exit
               end
-            | account, #Yojson.Safe.json -> raise Exit
+            | _, #Yojson.Safe.t -> raise Exit
           end
         with exn -> Http_error.data_encoding exn
       end
-    | #Yojson.Safe.json -> Http_error.data_shape "expected object"
+    | #Yojson.Safe.t -> Http_error.data_shape "expected object"
   end
 
 module MarginAccountSummary = struct
@@ -499,7 +480,7 @@ module OrderResponse = struct
                "",
                Yojson_encoding.destruct_safe (list Trade.encoding) trades
              end
-           | #Yojson.Safe.json as json ->
+           | #Yojson.Safe.t as json ->
              invalid_argf "OrderResponse: %s" (Yojson.Safe.to_string json) ()
          in
          { id ; trades ; amount_unfilled })
@@ -610,9 +591,8 @@ module OpenOrder = struct
   let encoding =
     let open Json_encoding in
     conv
-      (fun { id ; ts ; side ; price ; starting_qty ; qty ; margin } ->
-         ("", "", "", "", "", "", "", 0))
-      (fun (orderNumber, typ, rate, startingAmount, amount, total, date, margin) ->
+      (fun _ -> invalid_arg "unsupported")
+      (fun (orderNumber, typ, rate, startingAmount, amount, _total, date, margin) ->
          let id = Int.of_string orderNumber in
          let side = Side.of_string typ in
          let price = Float.of_string rate in
@@ -646,11 +626,11 @@ let open_orders ?buf ?(symbol="all") ~key ~secret () =
           Result.return @@
           List.Assoc.map oo_assoc ~f:begin function
             | `List oos -> List.map oos ~f:map_f
-            | #Yojson.Safe.json -> raise Exit
+            | #Yojson.Safe.t -> raise Exit
           end
         with exn -> Http_error.data_encoding exn
       end
-    | #Yojson.Safe.json -> Http_error.data_shape "expected object"
+    | #Yojson.Safe.t -> Http_error.data_shape "expected object"
   end
 
 module TradeHistory = struct
@@ -686,9 +666,9 @@ module TradeHistory = struct
   let encoding =
     let open Json_encoding in
     conv
-      (fun _ -> (0, "", "", "", "", "", "", "", "", ""))
+      (fun _ -> failwith "unsupported")
       (fun (globalTradeID, tradeID, date, rate, amount,
-            total, fee, orderNumber, typ, category) ->
+            _total, fee, orderNumber, typ, category) ->
         let id = Int.of_string tradeID in
         let ts = Time_ns.of_string @@ date ^ "Z" in
         let price = Float.of_string rate in
@@ -730,11 +710,11 @@ let trade_history ?buf ?(symbol="all") ?start ?stop ~key ~secret () =
         try
           Result.return @@ List.Assoc.map oo_assoc ~f:begin function
             | `List oos -> List.map oos ~f:map_f
-            | #Yojson.Safe.json -> raise Exit
+            | #Yojson.Safe.t -> raise Exit
           end
         with exn -> Http_error.data_encoding exn
       end
-    | #Yojson.Safe.json -> Http_error.data_shape "expected object"
+    | #Yojson.Safe.t -> Http_error.data_shape "expected object"
   end
 
 module MarginPosition = struct
@@ -783,5 +763,5 @@ let margin_positions ?buf ~key ~secret () =
   safe_post ?buf ~key ~secret ~data trading_url >>| Result.bind ~f:begin function
     | `Assoc ps_assoc ->
       Ok (List.map ps_assoc ~f:(fun (symbol, p) -> symbol, destruct p))
-    | #Yojson.Safe.json -> Http_error.data_shape "expected object"
+    | #Yojson.Safe.t -> Http_error.data_shape "expected object"
   end

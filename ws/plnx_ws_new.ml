@@ -1,7 +1,6 @@
 open Core
 open Async
 
-open Bs_devkit
 open Plnx
 
 let src = Logs.Src.create "plnx.ws"
@@ -34,7 +33,7 @@ module Repr = struct
   let book_of_yojson book =
     let open Float in
     List.fold_left book ~init:Map.empty ~f:begin fun a -> function
-      | price, `String qty -> Map.set a (of_string price) (of_string qty)
+      | price, `String qty -> Map.set a ~key:(of_string price) ~data:(of_string qty)
       | _ -> invalid_arg "Plnx_ws_new.book_of_yojson"
     end
 
@@ -71,7 +70,7 @@ module Repr = struct
       let side = side_of_int side in
       let ts = Time_ns.of_int63_ns_since_epoch Int63.(of_string ts * of_int 1_000_000_000) in
       Trade (Trade.create ~id ~ts ~side ~price ~qty ())
-    | #Yojson.Safe.json as json ->
+    | #Yojson.Safe.t as json ->
       invalid_argf "Repr.event_of_yojson: %s" (Yojson.Safe.to_string json) ()
 
   let of_yojson = function
@@ -80,7 +79,7 @@ module Repr = struct
     | `List [`Int subid ; `Int id] -> Event { subid ; id ; events = [] }
     | `List [`Int subid ; `Int id ; `List events] ->
       Event { subid ; id ; events = List.map events ~f:event_of_yojson }
-    | #Yojson.Safe.json as json ->
+    | #Yojson.Safe.t as json ->
       invalid_argf "Repr.of_yojson: %s" (Yojson.Safe.to_string json) ()
 end
 
@@ -124,7 +123,7 @@ let open_connection
       Writer.close w ;
     ] in
 
-  let tcp_fun (r, w) =
+  let tcp_fun (_, r, w) =
     Option.iter connected ~f:(fun c -> Condition.broadcast c ()) ;
     let ws_r, ws_w = Websocket_async.client_ez
         ~opcode:Text ~heartbeat uri r w
@@ -148,8 +147,7 @@ let open_connection
   let rec loop () = begin
     Monitor.try_with_or_error ~name:"Plnx_ws_new.open_connection"
       (fun () ->
-         addr_of_uri uri >>= fun addr ->
-         Conduit_async.V2.connect addr >>= tcp_fun) >>= function
+         Conduit_async.V3.connect_uri uri >>= tcp_fun) >>= function
     | Ok () ->
       Logs_async.err ~src begin fun m ->
         m "connection to %a terminated" Uri.pp_hum uri

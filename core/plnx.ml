@@ -77,11 +77,11 @@ module Ticker = struct
     let open Json_encoding in
     let open Encoding in
     conv
-      (fun { symbol; last; ask ; bid ; pct_change ; base_volume ;
+      (fun { symbol = _ ; last ; ask ; bid ; pct_change ; base_volume ;
              quote_volume ; is_frozen ; high24h ; low24h } ->
         (0, last, ask, bid, pct_change, base_volume,
          quote_volume, is_frozen, high24h, low24h))
-      (fun (id, last, ask, bid, pct_change, base_volume,
+      (fun (_id, last, ask, bid, pct_change, base_volume,
             quote_volume, is_frozen, high24h, low24h) ->
         { symbol ; last ; ask ; bid ; pct_change ; base_volume ;
           quote_volume ; is_frozen ; high24h ; low24h })
@@ -123,7 +123,7 @@ module Trade = struct
       qty: float ;
     } [@@deriving sexp]
 
-    let compare { price } { price = price' } = Float.compare price price'
+    let compare { price ; _ } { price = price' ; _ } = Float.compare price price'
 
     let create ?gid ~id ~ts ~side ~price ~qty () = {
       gid ; id ; ts ; side ; price ; qty
@@ -158,7 +158,7 @@ module BookEntry = struct
       qty : float ;
     } [@@deriving sexp]
 
-    let compare { price } { price = price' } = Float.compare price price'
+    let compare { price ; _ } { price = price' ; _ } = Float.compare price price'
 
     let create ~side ~price ~qty = { side ; price ; qty }
 

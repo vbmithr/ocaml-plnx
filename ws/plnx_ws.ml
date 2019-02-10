@@ -1,7 +1,6 @@
 open Core
 open Async
 
-open Bs_devkit
 open Plnx
 
 module type BACKEND = sig
@@ -38,7 +37,8 @@ module Backend_msgpck = struct
     let nb_written = to_repr msg |> Msgpck.StringBuf.write outbuf in
     let serialized_msg = Buffer.contents outbuf in
     let serialized_msg_bytes = Buffer.to_bytes outbuf in
-    Binary_packing.pack_unsigned_32_int_big_endian serialized_msg_bytes 0 nb_written;
+    Binary_packing.pack_unsigned_32_int_big_endian
+      ~buf:serialized_msg_bytes ~pos:0 nb_written ;
     Logs_async.debug ~src begin fun m ->
       m "-> %S" serialized_msg
     end >>= fun () ->
@@ -58,7 +58,7 @@ module Backend_msgpck = struct
 end
 
 module Backend_yojson = struct
-  type repr = Yojson.Safe.json
+  type repr = Yojson.Safe.t
 
   include Wamp_yojson
 
@@ -104,7 +104,7 @@ module Msg = struct
   let map_of_dict = function
     | Wamp.Element.Dict elts ->
       List.fold_left elts
-        ~init:String.Map.empty ~f:(fun a (k, v) -> String.Map.set a k v)
+        ~init:String.Map.empty ~f:(fun a (key, data) -> String.Map.set a ~key ~data)
     | _ -> invalid_arg "map_of_dict"
 
   let read_ticker = function
@@ -162,11 +162,6 @@ module Msg = struct
       | _ -> invalid_arg "Plnx_ws.M.to_msg"
     with _ ->
       Ticker (read_ticker e)
-
-  let ticker t = Ticker t
-  let trade t = Trade t
-  let book_modify entry = BookModify entry
-  let book_remove entry = BookRemove entry
 end
 
 let src = Logs.Src.create "plnx.ws.legacy"
@@ -187,7 +182,7 @@ module Make (B : BACKEND) = struct
       ?(heartbeat=Time_ns.Span.of_int_sec 25)
       ?disconnected
       to_ws =
-    let uri = Uri.make ~scheme:"https" ~host:"api.poloniex.com" () in
+    let url = Uri.make ~scheme:"https" ~host:"api.poloniex.com" () in
     let outbuf = Buffer.create 4096 in
     let rec loop_write mvar msg =
       Mvar.value_available mvar >>= fun () ->
@@ -213,15 +208,15 @@ module Make (B : BACKEND) = struct
     let process_ws r w =
       (* Initialize *)
       Logs_async.info ~src begin fun m ->
-        m "connected to %a" Uri.pp_hum uri
+        m "connected to %a" Uri.pp_hum url
       end >>= fun () ->
       let hello = EZ.(hello (Uri.of_string "realm1") [Subscriber]) in
       B.write outbuf w hello >>= fun () ->
-      Pipe.transfer' r client_w B.transfer
+      Pipe.transfer' r client_w ~f:B.transfer
     in
-    let tcp_fun (r, w) =
+    let tcp_fun (_, r, w) =
       let ws_r, ws_w = Websocket_async.client_ez
-          ~opcode:Binary ~extra_headers:B.headers ~heartbeat uri r w
+          ~opcode:Binary ~extra_headers:B.headers ~heartbeat url r w
       in
       let cleanup r w ws_r ws_w =
         Pipe.close_read ws_r ;
@@ -241,22 +236,22 @@ module Make (B : BACKEND) = struct
     in
     let rec loop () = begin
       Monitor.try_with_or_error ~name:"PNLX.Ws.open_connection"
-        (fun () -> addr_of_uri uri >>= fun addr ->
-          Conduit_async.V2.connect addr >>= tcp_fun) >>= function
+        (fun () ->
+          Conduit_async.V3.connect_uri url >>= tcp_fun) >>= function
       | Ok () ->
         Logs_async.err ~src begin fun m ->
-          m "connection to %a terminated" Uri.pp_hum uri
+          m "connection to %a terminated" Uri.pp_hum url
         end
       | Error err ->
         Logs_async.err ~src begin fun m ->
-          m "connection to %a raised %a" Uri.pp_hum uri Error.pp err
+          m "connection to %a raised %a" Uri.pp_hum url Error.pp err
         end
     end >>= fun () ->
       if Pipe.is_closed client_r then Deferred.unit
       else begin
         Option.iter disconnected ~f:(fun c -> Condition.broadcast c ()) ;
         Logs_async.err ~src begin fun m ->
-          m "restarting connection to %a" Uri.pp_hum uri
+          m "restarting connection to %a" Uri.pp_hum url
         end >>= fun () ->
         Clock_ns.after @@ Time_ns.Span.of_int_sec 10 >>=
         loop

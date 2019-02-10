@@ -8,7 +8,7 @@ module Ws = Plnx_ws_new
 let default_cfg = Filename.concat (Option.value_exn (Sys.getenv "HOME")) ".virtu"
 let find_auth cfg exchange =
   let cfg = Sexplib.Sexp.load_sexp_conv_exn cfg Cfg.t_of_sexp in
-  let { Cfg.key; secret } =
+  let { Cfg.key ; secret ; _ } =
     List.Assoc.find_exn ~equal:String.equal cfg exchange in
   key, secret
 
@@ -16,7 +16,6 @@ let base_spec =
   let open Command.Spec in
   empty
   +> flag "-cfg" (optional_with_default default_cfg string) ~doc:"path Filepath of cfg (default: ~/.virtu)"
-  +> flag "-loglevel" (optional int) ~doc:"1-3 loglevel"
   +> flag "-testnet" no_arg ~doc:" Use testnet"
   +> flag "-md" no_arg ~doc:" Use multiplexing"
   +> flag "-rest" no_arg ~doc:" Tread stdin as input for REST commands"
@@ -142,7 +141,7 @@ let plnx key secret topics =
       (*   | Ok resp -> info "%s" (Rest.sexp_of_order_response resp |> Sexplib.Sexp.to_string) *)
       (*   | Error err -> error "%s" @@ Rest.Http_error.to_string err *)
       (*   end *)
-      | h::t ->
+      | h :: _ ->
         Logs_async.err (fun m -> m "Unknown command %s" h)
       | [] ->
         Logs_async.err ~src (fun m -> m "Empty command")
@@ -174,7 +173,7 @@ let loglevel_of_int = function
   | _ -> Error
 
 let plnx =
-  let run cfg loglevel _testnet _md _rest topics =
+  let run cfg _testnet _md _rest topics =
     let key, secret = find_auth cfg "PLNX" in
     don't_wait_for @@ plnx key secret topics;
     never_returns @@ Scheduler.go ()
