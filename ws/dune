@@ -24,4 +24,6 @@
   core
   async
   logs-async
-  websocket-async))
+  ptime
+  ocplib-json-typed
+  fastws-async))

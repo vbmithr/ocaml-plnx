@@ -1,5 +1,3 @@
-open Core
-
 module Encoding = struct
   open Json_encoding
 
@@ -117,7 +115,7 @@ module Trade = struct
     type t = {
       gid : int option ;
       id : int ;
-      ts: Time_ns.t ;
+      ts: Ptime.t ;
       side: Side.t ;
       price: float ;
       qty: float ;
@@ -180,3 +178,4 @@ module BookEntry = struct
 end
 
 let flstring = Json_encoding.(Float.(conv to_string of_string string))
+let intstring = Json_encoding.(conv string_of_int int_of_string string)

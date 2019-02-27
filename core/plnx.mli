@@ -1,5 +1,3 @@
-open Core
-
 module Side : sig
   type t = [
     | `buy
@@ -19,6 +17,7 @@ type time_in_force = [
 ]
 
 val flstring : float Json_encoding.encoding
+val intstring : int Json_encoding.encoding
 
 module Ticker : sig
   type t = {
@@ -41,16 +40,16 @@ module Trade : sig
   type t = {
     gid : int option ;
     id : int ;
-    ts : Time_ns.t ;
+    ts : Ptime.t ;
     side : Side.t ;
     price : float ;
     qty : float ;
   } [@@deriving sexp]
 
-  include Comparable.S with type t := t
+  (* include Comparable.S with type t := t *)
 
   val create :
-    ?gid:int -> id:int -> ts:Time_ns.t -> side:Side.t ->
+    ?gid:int -> id:int -> ts:Ptime.t -> side:Side.t ->
     price:float -> qty:float -> unit -> t
 
   val encoding : t Json_encoding.encoding
@@ -63,7 +62,7 @@ module BookEntry : sig
     qty : float ;
   } [@@deriving sexp]
 
-  include Comparable.S with type t := t
+  (* include Comparable.S with type t := t *)
 
   val create : side:Side.t -> price:float -> qty:float -> t
 

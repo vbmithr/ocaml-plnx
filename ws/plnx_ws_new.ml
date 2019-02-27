@@ -33,6 +33,9 @@ module Repr = struct
   type command =
     | Subscribe of string
 
+  let yojson_of_subscribe symbol =
+    `Assoc [ "command", `String "subscribe" ; "channel", `String symbol ]
+
   let book_of_yojson book =
     let open Float in
     List.fold_left book ~init:Map.empty ~f:begin fun a -> function
@@ -44,6 +47,60 @@ module Repr = struct
     | 0 -> `sell
     | 1 -> `buy
     | _ -> invalid_arg "Repr.side_of_int"
+
+  let book_encoding =
+    let open Json_encoding in
+    conv begin fun m ->
+      `O (List.map (Float.Map.to_alist m) ~f:begin fun (k, v) ->
+          Float.to_string k, `String (Float.to_string v)
+        end)
+    end begin function
+      | `O kvs ->
+        List.fold_left kvs ~init:Float.Map.empty ~f:begin fun a -> function
+          | key, `String data ->
+            let key = Float.of_string key in
+            let data = Float.of_string data in
+            Float.Map.add_exn a ~key ~data
+          | _, #Json_repr.ezjsonm -> failwith "book_encoding"
+        end
+      | #Json_repr.ezjsonm -> failwith "book_encoding"
+    end
+      any_ezjson_value
+
+  let snapshot_encoding =
+    let open Json_encoding in
+    conv
+      (fun { symbol ; bid ; ask } -> (symbol, (bid, ask)))
+      (fun (symbol, (bid, ask)) -> { symbol ; bid ; ask })
+      (obj2
+         (req "currencyPair" string)
+         (req "orderBook" (tup2 book_encoding book_encoding)))
+
+  let side_encoding : Side.t Json_encoding.encoding =
+    let open Json_encoding in
+    conv
+      (function `buy -> 1 | `sell -> 0 | `buy_sell_unset -> 0)
+      (function 1 -> `buy | 0 -> `sell | _ -> `buy_sell_unset) int
+
+  let ts_encoding =
+    let open Json_encoding in
+    conv
+      (fun t -> Int64.of_float (Ptime.to_float_s t))
+      (fun i ->
+         match Ptime.of_float_s (Int64.to_float i) with
+         | None -> invalid_arg "ts_encoding"
+         | Some ts -> ts)
+      int53
+
+  let trade_encoding =
+    let open Json_encoding in
+    conv
+      (fun { Trade.gid = _ ; id ; ts ; side ; price ; qty } ->
+         ((), id, side, price, qty, ts))
+      (fun ((), id, side, price, qty, ts) ->
+         { Trade.id ; ts ; side ; price ; qty ; gid = None})
+      (tup6
+         (constant "t") intstring side_encoding flstring flstring ts_encoding)
 
   let event_of_yojson = function
     | `List [`String "i" ;
@@ -86,89 +143,16 @@ module Repr = struct
       invalid_argf "Repr.of_yojson: %s" (Yojson.Safe.to_string json) ()
 end
 
-let open_connection
-    ?(heartbeat=Time_ns.Span.of_int_sec 25)
-    ?connected
-    ?disconnected
-    to_ws =
-  let buf = Bi_outbuf.create 1024 in
-  let uri = Uri.make ~scheme:"https" ~host:"api2.poloniex.com" () in
-  let rec loop_write mvar msg =
-    Mvar.value_available mvar >>= fun () ->
-    let w = Mvar.peek_exn mvar in
-    if Pipe.is_closed w then begin
-      Logs_async.err ~src begin fun m ->
-        m "loop_write: Pipe to websocket closed"
-      end >>= fun () ->
-      Mvar.take mvar >>= fun _ ->
-      loop_write mvar msg
-    end
-    else match msg with
-      | Repr.Subscribe symbol ->
-        Pipe.write w (Yojson.Safe.to_string ~buf (`Assoc [ "command", `String "subscribe" ;
-                                                           "channel", `String symbol ]))
-  in
-  let ws_w_mvar = Mvar.create () in
-  let ws_w_mvar_ro = Mvar.read_only ws_w_mvar in
-  don't_wait_for @@
-  Monitor.handle_errors begin fun () ->
-    Pipe.iter ~continue_on_error:true to_ws ~f:(loop_write ws_w_mvar_ro)
-  end
-    (fun exn -> Logs.err ~src (fun m -> m "%a" Exn.pp exn));
-  let client_r, client_w = Pipe.create () in
-  let restart = Condition.create () in
+let url = Uri.make ~scheme:"https" ~host:"api2.poloniex.com" ()
 
-  let cleanup r w ws_r ws_w =
-    Pipe.close_read ws_r ;
-    Pipe.close ws_w ;
-    Deferred.all_unit [
-      Reader.close r ;
-      Writer.close w ;
-    ] in
-
-  let tcp_fun (_, r, w) =
-    Option.iter connected ~f:(fun c -> Condition.broadcast c ()) ;
-    let ws_r, ws_w = Websocket_async.client_ez
-        ~opcode:Text ~heartbeat uri r w
-    in
-    don't_wait_for begin
-      Deferred.all_unit
-        [ Reader.close_finished r ;
-          Writer.close_finished w ;
-          Condition.wait restart ;
-        ] >>= fun () ->
-      cleanup r w ws_r ws_w
-    end ;
-    Mvar.set ws_w_mvar ws_w ;
-    Logs_async.info ~src begin fun m ->
-      m "connected to %a" Uri.pp_hum uri
-    end >>= fun () ->
-    Pipe.transfer ws_r client_w ~f:begin fun str ->
-      Repr.of_yojson (Yojson.Safe.from_string ~buf str)
-    end
-  in
-  let rec loop () = begin
-    Monitor.try_with_or_error ~name:"Plnx_ws_new.open_connection"
-      (fun () ->
-         Conduit_async.V3.connect_uri uri >>= tcp_fun) >>= function
-    | Ok () ->
-      Logs_async.err ~src begin fun m ->
-        m "connection to %a terminated" Uri.pp_hum uri
-      end
-    | Error err ->
-      Logs_async.err ~src begin fun m ->
-        m "connection to %a raised %a" Uri.pp_hum uri Error.pp err
-      end
-  end >>= fun () ->
-    Option.iter disconnected ~f:(fun c -> Condition.broadcast c ()) ;
-    if Pipe.is_closed client_r then Deferred.unit
-    else begin
-      Logs_async.err ~src begin fun m ->
-        m "restarting connection to %a" Uri.pp_hum uri
-      end >>= fun () ->
-      Clock_ns.after @@ Time_ns.Span.of_int_sec 10 >>=
-      loop
-    end
-  in
-  don't_wait_for @@ loop ();
-  restart, client_r
+(* let with_connection ?(buf=Bi_outbuf.create 4096) ?heartbeat f =
+ *   let hb_ns = Option.map heartbeat ~f:Time_ns.Span.to_int63_ns in
+ *   Fastws_async.with_connection_ez ?hb_ns url ~f:begin fun r w ->
+ *     let rr = Pipe.map r ~f:begin fun msg ->
+ *         Repr.of_yojson (Yojson.Safe.from_string ~buf msg)
+ *       end in
+ *     let ws_read, client_write = Pipe.create () in
+ *     Pipe.transfer ws_read w ~f:begin function
+ *       | Subscribe symbol ->
+ *     end
+ *   end *)

@@ -30,9 +30,7 @@ module Repr : sig
     | Subscribe of string
 end
 
-val open_connection :
+val with_connection :
   ?heartbeat:Time_ns.Span.t ->
-  ?connected:unit Condition.t ->
-  ?disconnected:unit Condition.t ->
-  Repr.command Pipe.Reader.t ->
-  unit Condition.t * Repr.t Pipe.Reader.t
+  (Repr.t Pipe.Reader.t * Repr.command Pipe.Writer.t -> unit Deferred.t) ->
+  unit Deferred.t
