@@ -1,19 +1,4 @@
 (library
- (name        plnx_ws)
- (public_name plnx-ws)
- (modules plnx_ws)
- (libraries
-  bs-devkit
-  plnx
-  core
-  async
-  cohttp
-  wamp-msgpck
-  wamp-yojson
-  logs-async
-  websocket-async))
-
-(library
  (name        plnx_ws_new)
  (public_name plnx-ws-new)
  (preprocess (pps ppx_sexp_conv))
@@ -21,8 +6,23 @@
  (libraries
   bs-devkit
   plnx
+  core_kernel
+  logs-async
+  ptime
+  ocplib-json-typed
+  fastws-async))
+
+(library
+ (name        plnx_ws_new_async)
+ (public_name plnx-ws-new-async)
+ (preprocess (pps ppx_sexp_conv))
+ (modules plnx_ws_new_async)
+ (libraries
+  plnx
+  plnx-ws-new
   core
   async
+  bs-devkit
   logs-async
   ptime
   ocplib-json-typed

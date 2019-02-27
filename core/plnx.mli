@@ -1,3 +1,9 @@
+module Ptime : sig
+  include module type of Ptime
+    with type t = Ptime.t
+     and type span = Ptime.span
+end
+
 module Side : sig
   type t = [
     | `buy
@@ -46,7 +52,8 @@ module Trade : sig
     qty : float ;
   } [@@deriving sexp]
 
-  (* include Comparable.S with type t := t *)
+  val compare : t -> t -> int
+  (** Uses price only *)
 
   val create :
     ?gid:int -> id:int -> ts:Ptime.t -> side:Side.t ->
@@ -62,7 +69,8 @@ module BookEntry : sig
     qty : float ;
   } [@@deriving sexp]
 
-  (* include Comparable.S with type t := t *)
+  val compare : t -> t -> int
+  (** Uses price only *)
 
   val create : side:Side.t -> price:float -> qty:float -> t
 

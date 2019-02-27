@@ -1,52 +1,80 @@
-open Core
-open Async
-
+open Core_kernel
 open Plnx
-
-let src = Logs.Src.create "plnx.ws"
-    ~doc:"Poloniex API - Websocket library"
 
 module Repr = struct
   type snapshot = {
     symbol : string ;
-    bid : Float.t Float.Map.t ;
-    ask : Float.t Float.Map.t ;
+    bid : float Float.Map.t;
+    ask : float Float.Map.t ;
   } [@@deriving sexp]
 
   type event =
     | Snapshot of snapshot
-    | Update of BookEntry.t
+    | BookEntry of BookEntry.t
     | Trade of Trade.t
   [@@deriving sexp]
 
-  type t =
-    | Error of string
-    | Event of {
-        subid : int ;
-        id : int ;
-        events : event list ;
-      } [@@deriving sexp]
+  type t = {
+    chanid : int ;
+    seqnum : int ;
+    events : event list ;
+  } [@@deriving sexp]
 
   let pp ppf t =
     Format.fprintf ppf "%a" Sexplib.Sexp.pp_hum (sexp_of_t t)
 
+  type creds = {
+    key: string ;
+    payload: string ;
+    sign: string ;
+  }
+
+  let int_or_string_encoding =
+    let open Json_encoding in
+    union [
+      case string (function `String s -> Some s | `Int _ -> None) (fun s -> `String s) ;
+      case int (function `String _ -> None | `Int i -> Some i) (fun i -> `Int i) ;
+    ]
+
   type command =
-    | Subscribe of string
+    | Subscribe of ([`String of string | `Int of int] * creds option)
+    | Unsubscribe of [`String of string | `Int of int]
 
-  let yojson_of_subscribe symbol =
-    `Assoc [ "command", `String "subscribe" ; "channel", `String symbol ]
+  let subscribe_encoding =
+    let open Json_encoding in
+    conv
+      (function
+        | chanid, None -> (), chanid, None, None, None
+        | chanid, Some { key ; payload ; sign } ->
+          (), chanid, Some key, Some payload, Some sign)
+      (fun ((), chanid, k, p, s) -> match k, p, s with
+         | Some key, Some payload, Some sign ->
+           chanid, Some { key ; payload ; sign }
+         | _ -> chanid, None)
+      (obj5
+         (req "command" (constant "subscribe"))
+         (req "channel" int_or_string_encoding)
+         (opt "key" string)
+         (opt "payload" string)
+         (opt "sign" string))
 
-  let book_of_yojson book =
-    let open Float in
-    List.fold_left book ~init:Map.empty ~f:begin fun a -> function
-      | price, `String qty -> Map.set a ~key:(of_string price) ~data:(of_string qty)
-      | _ -> invalid_arg "Plnx_ws_new.book_of_yojson"
-    end
+  let unsubscribe_encoding =
+    let open Json_encoding in
+    conv
+      (fun chanid -> (), chanid)
+      (fun ((), chanid) -> chanid)
+      (obj2
+         (req "command" (constant "unsubscribe"))
+         (req "channel" int_or_string_encoding))
 
-  let side_of_int = function
-    | 0 -> `sell
-    | 1 -> `buy
-    | _ -> invalid_arg "Repr.side_of_int"
+  let command_encoding =
+    let open Json_encoding in
+    union [
+      case subscribe_encoding
+        (function Subscribe v -> Some v | _ -> None) (fun v -> Subscribe v) ;
+      case unsubscribe_encoding
+        (function Unsubscribe v -> Some v | _ -> None) (fun v -> Unsubscribe v) ;
+    ]
 
   let book_encoding =
     let open Json_encoding in
@@ -102,57 +130,26 @@ module Repr = struct
       (tup6
          (constant "t") intstring side_encoding flstring flstring ts_encoding)
 
-  let event_of_yojson = function
-    | `List [`String "i" ;
-             `Assoc ["currencyPair", `String symbol ;
-                     "orderBook", `List [`List [] ; `List []]]] ->
-      Snapshot { symbol ; bid = Float.Map.empty ; ask = Float.Map.empty }
-    | `List [`String "i" ;
-             `Assoc ["currencyPair", `String symbol ;
-                     "orderBook", `List [`Assoc ask ; `Assoc bid]]] ->
-      Snapshot { symbol ; bid = book_of_yojson bid ; ask = book_of_yojson ask }
-    | `List [`String "o" ; `Int side ; `String price ; `String qty ] ->
-      let price = Float.of_string price in
-      let qty = Float.of_string qty in
-      let side = side_of_int side in
-      Update (BookEntry.create ~side ~price ~qty)
-    | `List [`String "t" ; `String id ; `Int side ; `String price ; `String qty ; `Int ts ] ->
-      let id = Int.of_string id in
-      let price = Float.of_string price in
-      let qty = Float.of_string qty in
-      let side = side_of_int side in
-      let ts = Time_ns.of_int63_ns_since_epoch Int63.(of_int ts * of_int 1_000_000_000) in
-      Trade (Trade.create ~id ~ts ~side ~price ~qty ())
-    | `List [`String "t" ; `String id ; `Int side ; `String price ; `String qty ; `Intlit ts ] ->
-      let id = Int.of_string id in
-      let price = Float.of_string price in
-      let qty = Float.of_string qty in
-      let side = side_of_int side in
-      let ts = Time_ns.of_int63_ns_since_epoch Int63.(of_string ts * of_int 1_000_000_000) in
-      Trade (Trade.create ~id ~ts ~side ~price ~qty ())
-    | #Yojson.Safe.t as json ->
-      invalid_argf "Repr.event_of_yojson: %s" (Yojson.Safe.to_string json) ()
+  let order_encoding =
+    let open Json_encoding in
+    conv
+      (fun { BookEntry.side ; price ; qty } -> ((), side, price, qty))
+      (fun ((), side, price, qty) -> { BookEntry.side ; price ; qty })
+      (tup4 (constant "o") side_encoding flstring flstring)
 
-  let of_yojson = function
-    | `Assoc [ "error", `String msg ] -> Error msg
-    | `List [`Int subid] -> Event { subid ; id = 0 ; events = [] }
-    | `List [`Int subid ; `Int id] -> Event { subid ; id ; events = [] }
-    | `List [`Int subid ; `Int id ; `List events] ->
-      Event { subid ; id ; events = List.map events ~f:event_of_yojson }
-    | #Yojson.Safe.t as json ->
-      invalid_argf "Repr.of_yojson: %s" (Yojson.Safe.to_string json) ()
+  let event_encoding =
+    let open Json_encoding in
+    union [
+      case snapshot_encoding (function Snapshot s -> Some s | _ -> None) (fun s -> Snapshot s) ;
+      case trade_encoding (function Trade t -> Some t | _ -> None) (fun t -> Trade t) ;
+      case order_encoding (function BookEntry e -> Some e | _ -> None) (fun e -> BookEntry e) ;
+    ]
+
+  let encoding =
+    let open Json_encoding in
+    conv
+      (fun { chanid ; seqnum ; events } -> (chanid, seqnum, events))
+      (fun (chanid, seqnum, events) -> { chanid ; seqnum ; events })
+      (tup3
+         int int (list event_encoding))
 end
-
-let url = Uri.make ~scheme:"https" ~host:"api2.poloniex.com" ()
-
-(* let with_connection ?(buf=Bi_outbuf.create 4096) ?heartbeat f =
- *   let hb_ns = Option.map heartbeat ~f:Time_ns.Span.to_int63_ns in
- *   Fastws_async.with_connection_ez ?hb_ns url ~f:begin fun r w ->
- *     let rr = Pipe.map r ~f:begin fun msg ->
- *         Repr.of_yojson (Yojson.Safe.from_string ~buf msg)
- *       end in
- *     let ws_read, client_write = Pipe.create () in
- *     Pipe.transfer ws_read w ~f:begin function
- *       | Subscribe symbol ->
- *     end
- *   end *)

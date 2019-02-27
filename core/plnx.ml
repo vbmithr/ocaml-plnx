@@ -1,3 +1,18 @@
+open Sexplib.Std
+
+module Ptime = struct
+  include Ptime
+
+  let t_of_sexp sexp =
+    let sexp_str = string_of_sexp sexp in
+    match of_rfc3339 sexp_str with
+    | Ok (t, _, _) -> t
+    | _ -> invalid_arg "Ptime.t_of_sexp"
+
+  let sexp_of_t t =
+    sexp_of_string (to_rfc3339 t)
+end
+
 module Encoding = struct
   open Json_encoding
 
@@ -13,13 +28,16 @@ module Encoding = struct
   let date =
     conv
       (fun _ -> invalid_arg "Encoding.date")
-      (fun date -> Time_ns.of_string (date ^ "Z"))
+      (fun date ->
+         match Ptime.of_rfc3339 (date ^ "Z") with
+         | Error _ -> invalid_arg "invalid date"
+         | Ok (t, _, _) -> t)
       string
 
   let string_int_or_int =
     union [
-      case int (fun i -> Some i) Fn.id ;
-      case string (fun i -> Some (Int.to_string i)) Int.of_string
+      case int (fun i -> Some i) (fun t -> t) ;
+      case string (fun i -> Some (string_of_int i)) int_of_string
     ]
 end
 
@@ -97,18 +115,18 @@ module Ticker = struct
 end
 
 let margin_enabled = function
-| "BTC_XMR"
-| "BTC_ETH"
-| "BTC_CLAM"
-| "BTC_MAID"
-| "BTC_FCT"
-| "BTC_DASH"
-| "BTC_STR"
-| "BTC_BTS"
-| "BTC_LTC"
-| "BTC_XRP"
-| "BTC_DOGE" -> true
-| _ -> false
+  | "BTC_XMR"
+  | "BTC_ETH"
+  | "BTC_CLAM"
+  | "BTC_MAID"
+  | "BTC_FCT"
+  | "BTC_DASH"
+  | "BTC_STR"
+  | "BTC_BTS"
+  | "BTC_LTC"
+  | "BTC_XRP"
+  | "BTC_DOGE" -> true
+  | _ -> false
 
 module Trade = struct
   module T = struct
@@ -133,7 +151,10 @@ module Trade = struct
       conv
         (fun _ -> invalid_arg "Trade.construct not implemented")
         (fun (gid, id, date, side, price, qty, _total) ->
-           let ts = Time_ns.(add date (Span.of_int_ns id)) in
+           let ts =
+             match Ptime.(add_span date (Span.unsafe_of_d_ps (0, Int64.of_int id))) with
+             | None -> invalid_arg "Trade.encoding"
+             | Some t -> t in
            { gid ; id ; ts ; side ; price ; qty })
         (obj7
            (opt "globalTradeID" string_int_or_int)
@@ -145,7 +166,6 @@ module Trade = struct
            (req "total" string_float))
   end
   include T
-  include Comparable.Make(T)
 end
 
 module BookEntry = struct
@@ -163,18 +183,14 @@ module BookEntry = struct
     let encoding =
       let open Json_encoding in
       conv
-        (fun { price ; side ; qty } ->
-           let qty = if qty = 0. then None else Some qty in
-           (price, side, qty))
-        (fun (price, side, qty) ->
-           { price ; side ; qty = Option.value ~default:0. qty })
+        (fun { price ; side ; qty } -> (price, side, qty))
+        (fun (price, side, qty) -> { price ; side ; qty })
         (obj3
            (req "rate" float)
            (req "type" Side.encoding)
-           (opt "amount" float))
+           (dft "amount" float 0.))
   end
   include T
-  include Comparable.Make(T)
 end
 
 let flstring = Json_encoding.(Float.(conv to_string of_string string))
