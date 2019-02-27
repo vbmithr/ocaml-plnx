@@ -180,14 +180,3 @@ module BookEntry = struct
 end
 
 let flstring = Json_encoding.(Float.(conv to_string of_string string))
-
-module Cfg = struct
-  type cfg = {
-    key: string ;
-    secret: string ;
-    passphrase: string [@default ""];
-    quote: (string * int) list [@default []];
-  } [@@deriving sexp]
-
-  type t = (string * cfg) list [@@deriving sexp]
-end

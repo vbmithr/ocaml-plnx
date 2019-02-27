@@ -71,14 +71,3 @@ module BookEntry : sig
 end
 
 val margin_enabled : string -> bool
-
-module Cfg : sig
-  type cfg = {
-    key: string ;
-    secret: string ;
-    passphrase: string ;
-    quote: (string * int) list ;
-  } [@@deriving sexp]
-
-  type t = (string * cfg) list [@@deriving sexp]
-end
