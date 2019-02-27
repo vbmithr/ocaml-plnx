@@ -27,6 +27,9 @@ module Repr = struct
         events : event list ;
       } [@@deriving sexp]
 
+  let pp ppf t =
+    Format.fprintf ppf "%a" Sexplib.Sexp.pp_hum (sexp_of_t t)
+
   type command =
     | Subscribe of string
 

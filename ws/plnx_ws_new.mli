@@ -24,6 +24,8 @@ module Repr : sig
         events : event list ;
       } [@@deriving sexp]
 
+  val pp : Format.formatter -> t -> unit
+
   type command =
     | Subscribe of string
 end
