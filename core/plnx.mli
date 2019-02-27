@@ -1,4 +1,27 @@
-open Core
+module Encoding : sig
+  val polo_fl : float Json_encoding.encoding
+  (** [flstring] is an encoder for a float encoded as a string *)
+
+  val polo_int : int Json_encoding.encoding
+  (** [intstring] is an encoder for a int encoded as a string *)
+
+  val polo_bool : bool Json_encoding.encoding
+  (** [bool] is an encoder for a bool. *)
+
+  val date : Ptime.t Json_encoding.encoding
+  (** [date] is an encoder for Poloniex date (UNIX timestamp as string) *)
+end
+
+module Yojson_encoding : sig
+  include module type of Json_encoding.Make(Json_repr.Yojson)
+  val destruct_safe : 'a Json_encoding.encoding -> Yojson.Safe.t -> 'a
+end
+
+module Ptime : sig
+  include module type of Ptime
+    with type t = Ptime.t
+     and type span = Ptime.span
+end
 
 module Side : sig
   type t = [
@@ -18,11 +41,9 @@ type time_in_force = [
   | `Immediate_or_cancel
 ]
 
-val flstring : float Json_encoding.encoding
-
 module Ticker : sig
   type t = {
-    symbol: string;
+    id: int ;
     last: float;
     ask: float;
     bid: float;
@@ -32,25 +53,27 @@ module Ticker : sig
     is_frozen: bool;
     high24h: float;
     low24h: float;
-  }
+  } [@@deriving sexp]
 
-  val encoding : symbol:string -> t Json_encoding.encoding
+  val encoding : t Json_encoding.encoding
+  val ws_encoding : t Json_encoding.encoding
 end
 
 module Trade : sig
   type t = {
     gid : int option ;
     id : int ;
-    ts : Time_ns.t ;
+    ts : Ptime.t ;
     side : Side.t ;
     price : float ;
     qty : float ;
   } [@@deriving sexp]
 
-  include Comparable.S with type t := t
+  val compare : t -> t -> int
+  (** Uses price only *)
 
   val create :
-    ?gid:int -> id:int -> ts:Time_ns.t -> side:Side.t ->
+    ?gid:int -> id:int -> ts:Ptime.t -> side:Side.t ->
     price:float -> qty:float -> unit -> t
 
   val encoding : t Json_encoding.encoding
@@ -63,7 +86,8 @@ module BookEntry : sig
     qty : float ;
   } [@@deriving sexp]
 
-  include Comparable.S with type t := t
+  val compare : t -> t -> int
+  (** Uses price only *)
 
   val create : side:Side.t -> price:float -> qty:float -> t
 

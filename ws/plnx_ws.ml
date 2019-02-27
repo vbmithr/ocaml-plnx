@@ -1,279 +1,186 @@
-open Core
-open Async
-
+open Core_kernel
 open Plnx
 
-module type BACKEND = sig
-  type repr
+type snapshot = {
+  symbol : string ;
+  bid : float Float.Map.t ;
+  ask : float Float.Map.t ;
+} [@@deriving sexp]
 
-  include Wamp.S with type repr := repr
+type event =
+  | Snapshot of snapshot
+  | BookEntry of BookEntry.t
+  | Trade of Trade.t
+  | Ticker of Ticker.t
+[@@deriving sexp]
 
-  val headers :
-    Cohttp.Header.t
+type t = {
+  chanid : int ;
+  seqnum : int ;
+  events : event list ;
+} [@@deriving sexp]
 
-  val write :
-    Buffer.t -> string Pipe.Writer.t -> t -> unit Deferred.t
+let pp ppf t =
+  Format.fprintf ppf "%a" Sexplib.Sexp.pp_hum (sexp_of_t t)
 
-  val transfer :
-    string Queue.t -> t Queue.t Deferred.t
-end
+type creds = {
+  key: string ;
+  payload: string ;
+  sign: string ;
+}
 
-module Backend_msgpck = struct
-  type repr = Msgpck.t
+let id_or_string_encoding =
+ let open Json_encoding in
+  union [
+    case string (function `String s -> Some s | `Id _ -> None) (fun s -> `String s) ;
+    case int (function `String _ -> None | `Id i -> Some i) (fun i -> `Id i) ;
+  ]
 
-  include Wamp_msgpck
+type command =
+  | Subscribe of ([`String of string | `Id of int] * creds option)
+  | Unsubscribe of [`String of string | `Id of int]
 
-  let headers =
-    Cohttp.Header.init_with "Sec-Websocket-Protocol" "wamp.2.msgpack.batched"
+let subscribe_encoding =
+  let open Json_encoding in
+  conv
+    (function
+      | chanid, None -> (), chanid, None, None, None
+      | chanid, Some { key ; payload ; sign } ->
+        (), chanid, Some key, Some payload, Some sign)
+    (fun ((), chanid, k, p, s) -> match k, p, s with
+       | Some key, Some payload, Some sign ->
+         chanid, Some { key ; payload ; sign }
+       | _ -> chanid, None)
+    (obj5
+       (req "command" (constant "subscribe"))
+       (req "channel" id_or_string_encoding)
+       (opt "key" string)
+       (opt "payload" string)
+       (opt "sign" string))
 
-  let msg_size = Bytes.create 4
+let unsubscribe_encoding =
+  let open Json_encoding in
+  conv
+    (fun chanid -> (), chanid)
+    (fun ((), chanid) -> chanid)
+    (obj2
+       (req "command" (constant "unsubscribe"))
+       (req "channel" id_or_string_encoding))
 
-  let src = Logs.Src.create "plnx.ws.legacy.msgpack"
-      ~doc:"Poloniex API - LEGACY Websocket transport using Msgpack"
+let command_encoding =
+  let open Json_encoding in
+  union [
+    case subscribe_encoding
+      (function Subscribe v -> Some v | _ -> None) (fun v -> Subscribe v) ;
+    case unsubscribe_encoding
+      (function Unsubscribe v -> Some v | _ -> None) (fun v -> Unsubscribe v) ;
+  ]
 
-  let write outbuf w msg =
-    Buffer.clear outbuf;
-    Buffer.add_bytes outbuf msg_size ;
-    let nb_written = to_repr msg |> Msgpck.StringBuf.write outbuf in
-    let serialized_msg = Buffer.contents outbuf in
-    let serialized_msg_bytes = Buffer.to_bytes outbuf in
-    Binary_packing.pack_unsigned_32_int_big_endian
-      ~buf:serialized_msg_bytes ~pos:0 nb_written ;
-    Logs_async.debug ~src begin fun m ->
-      m "-> %S" serialized_msg
-    end >>= fun () ->
-    Pipe.write w serialized_msg
-
-  let transfer q =
-    let res = Queue.create () in
-    let rec read_loop pos msg_str =
-      if pos < String.length msg_str then
-        let nb_read, msg = Msgpck.String.read ~pos:(pos+4) msg_str in
-        match of_repr msg with
-        | Ok msg -> Queue.enqueue res msg; read_loop (pos+4+nb_read) msg_str
-        | Error msg -> Logs.err ~src (fun m -> m "%s" msg)
-    in
-    Queue.iter q ~f:(read_loop 0);
-    return res
-end
-
-module Backend_yojson = struct
-  type repr = Yojson.Safe.t
-
-  include Wamp_yojson
-
-  let headers =
-    Cohttp.Header.init_with "Sec-Websocket-Protocol" "wamp.2.json.batched"
-
-  let src = Logs.Src.create "plnx.ws.legacy.json"
-      ~doc:"Poloniex API - LEGACY Websocket transport using JSON"
-
-  let write outbuf w msg =
-    Buffer.clear outbuf ;
-    Buffer.add_string outbuf (to_repr msg |> Yojson.Safe.to_string) ;
-    Buffer.add_char outbuf '\030' ;
-    let contents = Buffer.contents outbuf in
-    Logs_async.debug ~src (fun m -> m "-> %S" contents) >>= fun () ->
-    Pipe.write w (Buffer.contents outbuf)
-
-  let transfer q =
-    let res = Queue.create () in
-    Queue.iter q ~f:begin fun str ->
-      let msgs = String.split str ~on:'\030' in
-      List.iter msgs ~f:begin function
-        | "" -> ()
-        | msg ->
-          Logs.debug ~src (fun m -> m "<- %s" msg) ;
-          match of_repr (Yojson.Safe.from_string msg) with
-          | Ok msg -> Queue.enqueue res msg
-          | Error msg -> Logs.err ~src (fun m -> m "%s" msg)
+let book_encoding =
+  let open Json_encoding in
+  conv begin fun m ->
+    `O (List.map (Float.Map.to_alist m) ~f:begin fun (k, v) ->
+        Float.to_string k, `String (Float.to_string v)
+      end)
+  end begin function
+    | `O kvs ->
+      List.fold_left kvs ~init:Float.Map.empty ~f:begin fun a -> function
+        | key, `String data ->
+          let key = Float.of_string key in
+          let data = Float.of_string data in
+          Float.Map.add_exn a ~key ~data
+        | _, #Json_repr.ezjsonm -> failwith "book_encoding"
       end
-    end ;
-    return res
-end
+    | #Json_repr.ezjsonm -> failwith "book_encoding"
+  end
+    any_ezjson_value
 
-module Yojson_encoding = Json_encoding.Make(Json_repr.Yojson)
+let snapshot_encoding =
+  let open Json_encoding in
+  conv
+    (fun { symbol ; bid ; ask } -> ((), (symbol, (bid, ask))))
+    (fun ((), (symbol, (bid, ask))) -> { symbol ; bid ; ask })
+    (tup2 (constant "i")
+       (obj2
+          (req "currencyPair" string)
+          (req "orderBook" (tup2 book_encoding book_encoding))))
 
-module Msg = struct
-  type t =
-    | Ticker of Ticker.t
-    | Trade of Trade.t
-    | BookModify of BookEntry.t
-    | BookRemove of BookEntry.t
+let side_encoding : Side.t Json_encoding.encoding =
+  let open Json_encoding in
+  conv
+    (function `buy -> 1 | `sell -> 0 | `buy_sell_unset -> 0)
+    (function 1 -> `buy | 0 -> `sell | _ -> `buy_sell_unset) int
 
-  let map_of_dict = function
-    | Wamp.Element.Dict elts ->
-      List.fold_left elts
-        ~init:String.Map.empty ~f:(fun a (key, data) -> String.Map.set a ~key ~data)
-    | _ -> invalid_arg "map_of_dict"
+let ts_encoding =
+  let open Json_encoding in
+  conv
+    (fun t -> Int64.of_float (Ptime.to_float_s t))
+    (fun i ->
+       match Ptime.of_float_s (Int64.to_float i) with
+       | None -> invalid_arg "ts_encoding"
+       | Some ts -> ts)
+    int53
 
-  let read_ticker = function
-    | Wamp.Element.List [String symbol; String last; String ask; String bid; String pct_change;
-                   String base_volume; String quote_volume; Int is_frozen; String high24h;
-                   String low24h
-                  ] ->
-      let last = Float.of_string last in
-      let ask = Float.of_string ask in
-      let bid = Float.of_string bid in
-      let pct_change = Float.of_string pct_change in
-      let base_volume = Float.of_string base_volume in
-      let quote_volume = Float.of_string quote_volume in
-      let is_frozen = if is_frozen = 0 then false else true in
-      let high24h = Float.of_string high24h in
-      let low24h = Float.of_string low24h in
-      { Ticker.symbol ; last ; ask ; bid ; pct_change ; base_volume ;
-        quote_volume ; is_frozen ; high24h ; low24h }
-    | _ -> invalid_arg "read_ticker"
+let trade_encoding =
+  let open Json_encoding in
+  let open Encoding in
+  conv
+    (fun { Trade.gid = _ ; id ; ts ; side ; price ; qty } ->
+       ((), id, side, price, qty, ts))
+    (fun ((), id, side, price, qty, ts) ->
+       { Trade.id ; ts ; side ; price ; qty ; gid = None})
+    (tup6
+       (constant "t") polo_int side_encoding polo_fl polo_fl ts_encoding)
 
-  let read_trade msg = try
-      let msg = map_of_dict msg in
-      let id = String.Map.find_exn msg "tradeID" |> Wamp.Element.to_string |> Int.of_string in
-      let date = String.Map.find_exn msg "date" |> Wamp.Element.to_string in
-      let side = String.Map.find_exn msg "type" |> Wamp.Element.to_string in
-      let rate = String.Map.find_exn msg "rate" |> Wamp.Element.to_string in
-      let amount = String.Map.find_exn msg "amount" |> Wamp.Element.to_string in
-      let ts = Time_ns.(add (of_string (date ^ "Z")) @@ Span.of_int_ns id) in
-      let side = Side.of_string side in
-      let price = Float.of_string rate in
-      let qty = Float.of_string amount in
-      Trade.create ~id ~ts ~side ~price ~qty ()
-    with _ -> invalid_arg "read_trade"
+let order_encoding =
+  let open Json_encoding in
+  let open Encoding in
+  conv
+    (fun { BookEntry.side ; price ; qty } -> ((), side, price, qty))
+    (fun ((), side, price, qty) -> { BookEntry.side ; price ; qty })
+    (tup4 (constant "o") side_encoding polo_fl polo_fl)
 
-  let read_book msg = try
-      let msg = map_of_dict msg in
-      let side = String.Map.find_exn msg "type" |> Wamp.Element.to_string in
-      let price = String.Map.find_exn msg "rate" |> Wamp.Element.to_string in
-      let qty = String.Map.find msg "amount" |> Option.map ~f:Wamp.Element.to_string in
-      let side = Side.of_string side in
-      let price = Float.of_string price in
-      let qty = Option.value_map qty ~default:0. ~f:Float.of_string in
-      BookEntry.create ~side ~price ~qty
-    with _ -> invalid_arg "read_book"
+let event_encoding =
+  let open Json_encoding in
+  union [
+    case snapshot_encoding (function Snapshot s -> Some s | _ -> None) (fun s -> Snapshot s) ;
+    case trade_encoding (function Trade t -> Some t | _ -> None) (fun t -> Trade t) ;
+    case order_encoding (function BookEntry e -> Some e | _ -> None) (fun e -> BookEntry e) ;
+  ]
 
-  let of_element e =
-    try
-      let elts = map_of_dict e in
-      let typ = String.Map.find_exn elts "type" |> Wamp.Element.to_string in
-      let data = String.Map.find_exn elts "data" in
-      match typ with
-      | "newTrade" -> Trade (read_trade data)
-      | "orderBookModify" -> BookModify (read_book data)
-      | "orderBookRemove" -> BookRemove (read_book data)
-      | _ -> invalid_arg "Plnx_ws.M.to_msg"
-    with _ ->
-      Ticker (read_ticker e)
-end
+let hello_encoding =
+  let open Json_encoding in
+  conv
+    (fun { chanid ; seqnum ; _ } -> (chanid, seqnum))
+    (fun (chanid, seqnum) -> { chanid ; seqnum ; events = [] })
+    (tup2 int int)
 
-let src = Logs.Src.create "plnx.ws.legacy"
-    ~doc:"Poloniex API - LEGACY Websocket library"
+let msg_encoding =
+  let open Json_encoding in
+  conv
+    (fun { chanid ; seqnum ; events } -> (chanid, seqnum, events))
+    (fun (chanid, seqnum, events) -> { chanid ; seqnum ; events })
+    (tup3 int int (list event_encoding))
 
-module Make (B : BACKEND) = struct
-  include B
+let ticker_encoding =
+  let open Json_encoding in
+  conv
+    (fun _ -> invalid_arg "not implemented")
+    (fun (chanid, (), t) -> { chanid ; seqnum = 0 ; events = [ Ticker t ] })
+    (tup3 int null Ticker.ws_encoding)
 
-  let subscribe w topics =
-    let topics = List.map topics ~f:Uri.of_string in
-    Deferred.List.map ~how:`Sequential topics ~f:begin fun topic ->
-      let request_id, subscribe_msg = EZ.subscribe topic in
-      Pipe.write w subscribe_msg >>| fun () ->
-      request_id
-    end
+let hb_encoding =
+  let open Json_encoding in
+  conv
+    (fun _ -> invalid_arg "not implemented")
+    (fun chanid -> { chanid ; seqnum = 0 ; events = [] })
+    (tup1 int)
 
-  let open_connection
-      ?(heartbeat=Time_ns.Span.of_int_sec 25)
-      ?disconnected
-      to_ws =
-    let url = Uri.make ~scheme:"https" ~host:"api.poloniex.com" () in
-    let outbuf = Buffer.create 4096 in
-    let rec loop_write mvar msg =
-      Mvar.value_available mvar >>= fun () ->
-      let w = Mvar.peek_exn mvar in
-      if Pipe.is_closed w then begin
-        Logs_async.err ~src begin fun m ->
-          m "loop_write: Pipe to websocket closed"
-        end >>= fun () ->
-        Mvar.take mvar >>= fun _ ->
-        loop_write mvar msg
-      end
-      else B.write outbuf w msg
-    in
-    let ws_w_mvar = Mvar.create () in
-    let ws_w_mvar_ro = Mvar.read_only ws_w_mvar in
-    don't_wait_for @@
-    Monitor.handle_errors begin fun () ->
-      Pipe.iter ~continue_on_error:true to_ws ~f:(loop_write ws_w_mvar_ro)
-    end begin fun exn ->
-      Logs.err ~src (fun m -> m "%a" Exn.pp exn)
-    end ;
-    let client_r, client_w = Pipe.create () in
-    let process_ws r w =
-      (* Initialize *)
-      Logs_async.info ~src begin fun m ->
-        m "connected to %a" Uri.pp_hum url
-      end >>= fun () ->
-      let hello = EZ.(hello (Uri.of_string "realm1") [Subscriber]) in
-      B.write outbuf w hello >>= fun () ->
-      Pipe.transfer' r client_w ~f:B.transfer
-    in
-    let tcp_fun (_, r, w) =
-      let ws_r, ws_w = Websocket_async.client_ez
-          ~opcode:Binary ~extra_headers:B.headers ~heartbeat url r w
-      in
-      let cleanup r w ws_r ws_w =
-        Pipe.close_read ws_r ;
-        Pipe.close ws_w ;
-        Deferred.all_unit [
-          Reader.close r ;
-          Writer.close w ;
-        ]
-      in
-      don't_wait_for begin
-        Deferred.all_unit
-          [ Reader.close_finished r ; Writer.close_finished w ] >>= fun () ->
-        cleanup r w ws_r ws_w
-      end ;
-      Mvar.set ws_w_mvar ws_w ;
-      process_ws ws_r ws_w
-    in
-    let rec loop () = begin
-      Monitor.try_with_or_error ~name:"PNLX.Ws.open_connection"
-        (fun () ->
-          Conduit_async.V3.connect_uri url >>= tcp_fun) >>= function
-      | Ok () ->
-        Logs_async.err ~src begin fun m ->
-          m "connection to %a terminated" Uri.pp_hum url
-        end
-      | Error err ->
-        Logs_async.err ~src begin fun m ->
-          m "connection to %a raised %a" Uri.pp_hum url Error.pp err
-        end
-    end >>= fun () ->
-      if Pipe.is_closed client_r then Deferred.unit
-      else begin
-        Option.iter disconnected ~f:(fun c -> Condition.broadcast c ()) ;
-        Logs_async.err ~src begin fun m ->
-          m "restarting connection to %a" Uri.pp_hum url
-        end >>= fun () ->
-        Clock_ns.after @@ Time_ns.Span.of_int_sec 10 >>=
-        loop
-      end
-    in
-    don't_wait_for @@ loop ();
-    client_r
-end
-
-module type S = sig
-  type repr
-  include Wamp.S with type repr := repr
-
-  val open_connection :
-    ?heartbeat:Time_ns.Span.t ->
-    ?disconnected:unit Condition.t ->
-    t Pipe.Reader.t ->
-    t Pipe.Reader.t
-
-  val subscribe :
-    t Pipe.Writer.t -> string list -> int list Deferred.t
-end
-
-module M = Make(Backend_msgpck)
-module J = Make(Backend_yojson)
+let encoding =
+  let open Json_encoding in
+  union [
+    case hello_encoding (fun _ -> None) (fun t -> t) ;
+    case msg_encoding (fun t -> Some t) (fun t -> t) ;
+    case ticker_encoding (fun t -> Some t) (fun t -> t) ;
+    case hb_encoding (fun t -> Some t) (fun t -> t) ;
+  ]

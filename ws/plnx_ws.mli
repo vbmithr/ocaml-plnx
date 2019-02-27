@@ -1,31 +1,36 @@
-open Core
-open Async
-
+open Core_kernel
 open Plnx
 
-module Msg : sig
-  type t =
-    | Ticker of Ticker.t
-    | Trade of Trade.t
-    | BookModify of BookEntry.t
-    | BookRemove of BookEntry.t
+type snapshot = {
+  symbol : string ;
+  bid : float Float.Map.t ;
+  ask : float Float.Map.t ;
+} [@@deriving sexp]
 
-  val of_element : Wamp.Element.t -> t
-end
+type event =
+  | Snapshot of snapshot
+  | BookEntry of BookEntry.t
+  | Trade of Trade.t
+  | Ticker of Ticker.t
+[@@deriving sexp]
 
-module type S = sig
-  type repr
-  include Wamp.S with type repr := repr
+type t = {
+  chanid : int ;
+  seqnum : int ;
+  events : event list ;
+} [@@deriving sexp]
 
-  val open_connection :
-    ?heartbeat:Time_ns.Span.t ->
-    ?disconnected:unit Condition.t ->
-    t Pipe.Reader.t ->
-    t Pipe.Reader.t
+val pp : Format.formatter -> t -> unit
+val encoding : t Json_encoding.encoding
 
-  val subscribe :
-    t Pipe.Writer.t -> string list -> int list Deferred.t
-end
+type creds = {
+  key: string ;
+  payload: string ;
+  sign: string ;
+}
 
-module M : S with type repr := Msgpck.t
-module J : S with type repr := Yojson.Safe.t
+type command =
+  | Subscribe of ([`String of string | `Id of int] * creds option)
+  | Unsubscribe of [`String of string | `Id of int]
+
+val command_encoding : command Json_encoding.encoding

@@ -1,28 +1,63 @@
-open Core
+open Sexplib.Std
+
+module Yojson_encoding = struct
+  include Json_encoding.Make(Json_repr.Yojson)
+
+  let destruct_safe encoding value =
+    try destruct encoding value with exn ->
+      let value_str = Yojson.Safe.to_string value in
+      Format.eprintf "%s@.%a@." value_str
+        (Json_encoding.print_error ?print_unknown:None) exn ;
+      raise exn
+end
+
+module Ptime = struct
+  include Ptime
+
+  let t_of_sexp sexp =
+    let sexp_str = string_of_sexp sexp in
+    match of_rfc3339 sexp_str with
+    | Ok (t, _, _) -> t
+    | _ -> invalid_arg "Ptime.t_of_sexp"
+
+  let sexp_of_t t =
+    sexp_of_string (to_rfc3339 t)
+end
 
 module Encoding = struct
   open Json_encoding
 
-  let string_float =
-    conv Float.to_string Float.of_string string
+  let polo_fl =
+    union [
+      case float (fun a -> Some a) (fun a -> a) ;
+      case string (fun a -> Some (string_of_float a)) (fun a -> float_of_string a) ;
+    ]
 
-  let string_bool =
-    string_enum [
-      "1", true ;
-      "0", false
+  let polo_int =
+    union [
+      case int (fun i -> Some i) (fun t -> t) ;
+      case string (fun i -> Some (string_of_int i)) int_of_string
+    ]
+
+  let polo_bool =
+    union [
+      case bool (fun b -> Some b) (fun t -> t) ;
+      case int
+        (function true -> Some 1 | false -> Some 0)
+        (function 0 -> false | _ -> true) ;
+      case string
+        (function true -> Some "1" | false -> Some "0")
+        (function "0" -> false | _ -> true) ;
     ]
 
   let date =
     conv
       (fun _ -> invalid_arg "Encoding.date")
-      (fun date -> Time_ns.of_string (date ^ "Z"))
+      (fun date ->
+         match Ptime.of_rfc3339 (date ^ "Z") with
+         | Error _ -> invalid_arg "invalid date"
+         | Ok (t, _, _) -> t)
       string
-
-  let string_int_or_int =
-    union [
-      case int (fun i -> Some i) Fn.id ;
-      case string (fun i -> Some (Int.to_string i)) Int.of_string
-    ]
 end
 
 module Side = struct
@@ -61,7 +96,7 @@ type time_in_force = [
 
 module Ticker = struct
   type t = {
-    symbol: string;
+    id: int ;
     last: float;
     ask: float;
     bid: float;
@@ -71,53 +106,69 @@ module Ticker = struct
     is_frozen: bool;
     high24h: float;
     low24h: float;
-  }
+  } [@@deriving sexp]
 
-  let encoding ~symbol =
+  let encoding =
     let open Json_encoding in
     let open Encoding in
     conv
-      (fun { symbol = _ ; last ; ask ; bid ; pct_change ; base_volume ;
+      (fun { id ; last ; ask ; bid ; pct_change ; base_volume ;
              quote_volume ; is_frozen ; high24h ; low24h } ->
-        (0, last, ask, bid, pct_change, base_volume,
+        (id, last, ask, bid, pct_change, base_volume,
          quote_volume, is_frozen, high24h, low24h))
-      (fun (_id, last, ask, bid, pct_change, base_volume,
+      (fun (id, last, ask, bid, pct_change, base_volume,
             quote_volume, is_frozen, high24h, low24h) ->
-        { symbol ; last ; ask ; bid ; pct_change ; base_volume ;
+        { id ; last ; ask ; bid ; pct_change ; base_volume ;
           quote_volume ; is_frozen ; high24h ; low24h })
       (obj10
          (req "id" int)
-         (req "last" string_float)
-         (req "lowestAsk" string_float)
-         (req "highestBid" string_float)
-         (req "percentChange" string_float)
-         (req "baseVolume" string_float)
-         (req "quoteVolume" string_float)
-         (req "isFrozen" string_bool)
-         (req "high24hr" string_float)
-         (req "low24hr" string_float))
+         (req "last" polo_fl)
+         (req "lowestAsk" polo_fl)
+         (req "highestBid" polo_fl)
+         (req "percentChange" polo_fl)
+         (req "baseVolume" polo_fl)
+         (req "quoteVolume" polo_fl)
+         (req "isFrozen" polo_bool)
+         (req "high24hr" polo_fl)
+         (req "low24hr" polo_fl))
+
+  let ws_encoding =
+    let open Json_encoding in
+    let open Encoding in
+    conv
+      (fun { id ; last ; ask ; bid ; pct_change ; base_volume ;
+             quote_volume ; is_frozen ; high24h ; low24h } ->
+        (id, last, ask, bid, pct_change, base_volume,
+         quote_volume, is_frozen, high24h, low24h))
+      (fun (id, last, ask, bid, pct_change, base_volume,
+            quote_volume, is_frozen, high24h, low24h) ->
+        { id ; last ; ask ; bid ; pct_change ; base_volume ;
+          quote_volume ; is_frozen ; high24h ; low24h })
+      (tup10
+         int polo_fl polo_fl polo_fl polo_fl polo_fl polo_fl
+         polo_bool polo_fl polo_fl)
 end
 
 let margin_enabled = function
-| "BTC_XMR"
-| "BTC_ETH"
-| "BTC_CLAM"
-| "BTC_MAID"
-| "BTC_FCT"
-| "BTC_DASH"
-| "BTC_STR"
-| "BTC_BTS"
-| "BTC_LTC"
-| "BTC_XRP"
-| "BTC_DOGE" -> true
-| _ -> false
+  | "BTC_XMR"
+  | "BTC_ETH"
+  | "BTC_CLAM"
+  | "BTC_MAID"
+  | "BTC_FCT"
+  | "BTC_DASH"
+  | "BTC_STR"
+  | "BTC_BTS"
+  | "BTC_LTC"
+  | "BTC_XRP"
+  | "BTC_DOGE" -> true
+  | _ -> false
 
 module Trade = struct
   module T = struct
     type t = {
       gid : int option ;
       id : int ;
-      ts: Time_ns.t ;
+      ts: Ptime.t ;
       side: Side.t ;
       price: float ;
       qty: float ;
@@ -135,19 +186,21 @@ module Trade = struct
       conv
         (fun _ -> invalid_arg "Trade.construct not implemented")
         (fun (gid, id, date, side, price, qty, _total) ->
-           let ts = Time_ns.(add date (Span.of_int_ns id)) in
+           let ts =
+             match Ptime.(add_span date (Span.unsafe_of_d_ps (0, Int64.of_int id))) with
+             | None -> invalid_arg "Trade.encoding"
+             | Some t -> t in
            { gid ; id ; ts ; side ; price ; qty })
         (obj7
-           (opt "globalTradeID" string_int_or_int)
-           (req "tradeID" string_int_or_int)
+           (opt "globalTradeID" polo_int)
+           (req "tradeID" polo_int)
            (req "date" date)
            (req "type" Side.encoding)
-           (req "rate" string_float)
-           (req "amount" string_float)
-           (req "total" string_float))
+           (req "rate" polo_fl)
+           (req "amount" polo_fl)
+           (req "total" polo_fl))
   end
   include T
-  include Comparable.Make(T)
 end
 
 module BookEntry = struct
@@ -165,18 +218,13 @@ module BookEntry = struct
     let encoding =
       let open Json_encoding in
       conv
-        (fun { price ; side ; qty } ->
-           let qty = if qty = 0. then None else Some qty in
-           (price, side, qty))
-        (fun (price, side, qty) ->
-           { price ; side ; qty = Option.value ~default:0. qty })
+        (fun { price ; side ; qty } -> (price, side, qty))
+        (fun (price, side, qty) -> { price ; side ; qty })
         (obj3
            (req "rate" float)
            (req "type" Side.encoding)
-           (opt "amount" float))
+           (dft "amount" float 0.))
   end
   include T
-  include Comparable.Make(T)
 end
 
-let flstring = Json_encoding.(Float.(conv to_string of_string string))

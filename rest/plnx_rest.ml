@@ -3,17 +3,6 @@ open Async
 
 open Plnx
 
-module Yojson_encoding = struct
-  include Json_encoding.Make(Json_repr.Yojson)
-
-  let destruct_safe encoding value =
-    try destruct encoding value with exn ->
-      let value_str = Yojson.Safe.to_string value in
-      Format.eprintf "%s@.%a@." value_str
-        (Json_encoding.print_error ?print_unknown:None) exn ;
-      raise exn
-end
-
 open Cohttp_async
 
 exception ClientError of string
@@ -126,16 +115,12 @@ let tickers ?buf () =
     | `Assoc tickers ->
       begin try
           Ok (List.rev_map tickers ~f:begin fun (symbol, t) ->
-              Yojson_encoding.destruct_safe (Ticker.encoding ~symbol) t
+              symbol, Yojson_encoding.destruct_safe Ticker.encoding t
             end)
         with exn -> Http_error.data_encoding exn
       end
     | #Yojson.Safe.t -> Http_error.data_shape "expected object"
   end
-
-let ticker ?buf symbol =
-  tickers ?buf () >>|
-  Result.map ~f:(List.find ~f:(fun { Ticker.symbol = symbol' ; _ } -> symbol = symbol'))
 
 let bids_asks_of_yojson side records =
   List.map records ~f:(function
@@ -244,23 +229,35 @@ let trades ?start_ts ?end_ts symbol =
     | exn -> Cohttp exn
   end
 
+let of_ptime t =
+  Ptime.to_rfc3339 t |> Time_ns.of_string
+
+let to_ptime t =
+  Time_ns.to_string t |> Ptime.of_rfc3339
+
 let all_trades
     ?(wait=Time_ns.Span.of_int_ms 167)
     ?(start_ts=Time_ns.epoch)
     ?(end_ts=Time_ns.now ())
     symbol =
+  let start_ts =
+    match to_ptime start_ts with
+    | Error _ -> invalid_arg "all_trades"
+    | Ok (v, _, _) -> v in
   let rec inner cur_end_ts w =
     trades ~end_ts:cur_end_ts symbol >>= function
     | Error err ->
       Logs_async.err ~src (fun m -> m "%a" Http_error.pp err)
     | Ok trades ->
-      let oldest_ts = ref @@ Time_ns.max_value in
+      let oldest_ts = ref @@ Ptime.max in
       Pipe.transfer trades w ~f:(fun t -> oldest_ts := t.ts; t) >>= fun () ->
-      if !oldest_ts = Time_ns.max_value || Time_ns.(!oldest_ts < start_ts) then
+      if !oldest_ts = Ptime.max || !oldest_ts < start_ts then
         (Pipe.close w; Deferred.unit)
       else
         Clock_ns.after wait >>= fun () ->
-        inner Time_ns.(sub !oldest_ts @@ Span.of_int_sec 1) w
+        match Ptime.(sub_span !oldest_ts (Span.of_int_s 1)) with
+        | None -> assert false
+        | Some t -> inner (of_ptime t) w
   in
   Pipe.create_reader ~close_on_exception:false (inner end_ts)
 
@@ -329,13 +326,14 @@ module Balance = struct
 
   let encoding =
     let open Json_encoding in
+    let open Encoding in
     conv
       (fun _ -> (0., 0., 0.))
       (fun (available, on_orders, btc_value) -> { available ; on_orders ; btc_value })
       (obj3
-         (req "available" flstring)
-         (req "onOrders" flstring)
-         (req "btcValue" flstring))
+         (req "available" polo_fl)
+         (req "onOrders" polo_fl)
+         (req "btcValue" polo_fl))
 end
 
 let balances ?buf ?(all=true) ~key ~secret () =
@@ -463,6 +461,7 @@ module OrderResponse = struct
 
   let encoding =
     let open Json_encoding in
+    let open Encoding in
     conv
       (fun _ -> invalid_arg "Order_response.encoding: not implemented")
       (fun ((), (id, trades, amount_unfilled)) ->
@@ -488,7 +487,7 @@ module OrderResponse = struct
          (obj3
             (req "orderNumber" string)
             (dft "resultingTrades" any_value Json_repr.(repr_to_any (module Yojson) (`List [])))
-            (opt "amountUnfilled" flstring)))
+            (opt "amountUnfilled" polo_fl)))
 end
 
 let submit_order ?buf ?tif ?(post_only=false)
@@ -739,6 +738,7 @@ module MarginPosition = struct
 
   let position_encoding =
     let open Json_encoding in
+    let open Encoding in
     conv
       (fun _ -> ((), (0., 0., 0., 0., 0., Flat)))
       (fun ((), (price, qty, total, pl, lending_fees, side)) ->
@@ -749,11 +749,11 @@ module MarginPosition = struct
          | Short ->
            Some { price ; qty ; total ; pl ; lending_fees ; side = `sell })
       (merge_objs unit (obj6
-         (req "basePrice" flstring)
-         (req "amount" flstring)
-         (req "total" flstring)
-         (req "pl" flstring)
-         (req "lendingFees" flstring)
+         (req "basePrice" polo_fl)
+         (req "amount" polo_fl)
+         (req "total" polo_fl)
+         (req "pl" polo_fl)
+         (req "lendingFees" polo_fl)
          (req "type" side_encoding)))
 end
 
