@@ -3,4 +3,9 @@
  (public_name plnx-cli)
  (package plnx-cli)
  (preprocess (pps ppx_jane ppx_sexp_conv))
- (libraries bs-devkit logs-async-reporter plnx-rest plnx-ws-new))
+ (libraries
+  bs-devkit
+  logs-async-reporter
+  plnx-rest
+  plnx-ws-new
+  plnx-ws-new-async))

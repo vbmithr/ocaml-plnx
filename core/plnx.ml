@@ -1,5 +1,16 @@
 open Sexplib.Std
 
+module Yojson_encoding = struct
+  include Json_encoding.Make(Json_repr.Yojson)
+
+  let destruct_safe encoding value =
+    try destruct encoding value with exn ->
+      let value_str = Yojson.Safe.to_string value in
+      Format.eprintf "%s@.%a@." value_str
+        (Json_encoding.print_error ?print_unknown:None) exn ;
+      raise exn
+end
+
 module Ptime = struct
   include Ptime
 
@@ -16,13 +27,27 @@ end
 module Encoding = struct
   open Json_encoding
 
-  let string_float =
-    conv Float.to_string Float.of_string string
+  let polo_fl =
+    union [
+      case float (fun a -> Some a) (fun a -> a) ;
+      case string (fun a -> Some (string_of_float a)) (fun a -> float_of_string a) ;
+    ]
 
-  let string_bool =
-    string_enum [
-      "1", true ;
-      "0", false
+  let polo_int =
+    union [
+      case int (fun i -> Some i) (fun t -> t) ;
+      case string (fun i -> Some (string_of_int i)) int_of_string
+    ]
+
+  let polo_bool =
+    union [
+      case bool (fun b -> Some b) (fun t -> t) ;
+      case int
+        (function true -> Some 1 | false -> Some 0)
+        (function 0 -> false | _ -> true) ;
+      case string
+        (function true -> Some "1" | false -> Some "0")
+        (function "0" -> false | _ -> true) ;
     ]
 
   let date =
@@ -33,12 +58,6 @@ module Encoding = struct
          | Error _ -> invalid_arg "invalid date"
          | Ok (t, _, _) -> t)
       string
-
-  let string_int_or_int =
-    union [
-      case int (fun i -> Some i) (fun t -> t) ;
-      case string (fun i -> Some (string_of_int i)) int_of_string
-    ]
 end
 
 module Side = struct
@@ -77,7 +96,7 @@ type time_in_force = [
 
 module Ticker = struct
   type t = {
-    symbol: string;
+    id: int ;
     last: float;
     ask: float;
     bid: float;
@@ -87,31 +106,47 @@ module Ticker = struct
     is_frozen: bool;
     high24h: float;
     low24h: float;
-  }
+  } [@@deriving sexp]
 
-  let encoding ~symbol =
+  let encoding =
     let open Json_encoding in
     let open Encoding in
     conv
-      (fun { symbol = _ ; last ; ask ; bid ; pct_change ; base_volume ;
+      (fun { id ; last ; ask ; bid ; pct_change ; base_volume ;
              quote_volume ; is_frozen ; high24h ; low24h } ->
-        (0, last, ask, bid, pct_change, base_volume,
+        (id, last, ask, bid, pct_change, base_volume,
          quote_volume, is_frozen, high24h, low24h))
-      (fun (_id, last, ask, bid, pct_change, base_volume,
+      (fun (id, last, ask, bid, pct_change, base_volume,
             quote_volume, is_frozen, high24h, low24h) ->
-        { symbol ; last ; ask ; bid ; pct_change ; base_volume ;
+        { id ; last ; ask ; bid ; pct_change ; base_volume ;
           quote_volume ; is_frozen ; high24h ; low24h })
       (obj10
          (req "id" int)
-         (req "last" string_float)
-         (req "lowestAsk" string_float)
-         (req "highestBid" string_float)
-         (req "percentChange" string_float)
-         (req "baseVolume" string_float)
-         (req "quoteVolume" string_float)
-         (req "isFrozen" string_bool)
-         (req "high24hr" string_float)
-         (req "low24hr" string_float))
+         (req "last" polo_fl)
+         (req "lowestAsk" polo_fl)
+         (req "highestBid" polo_fl)
+         (req "percentChange" polo_fl)
+         (req "baseVolume" polo_fl)
+         (req "quoteVolume" polo_fl)
+         (req "isFrozen" polo_bool)
+         (req "high24hr" polo_fl)
+         (req "low24hr" polo_fl))
+
+  let ws_encoding =
+    let open Json_encoding in
+    let open Encoding in
+    conv
+      (fun { id ; last ; ask ; bid ; pct_change ; base_volume ;
+             quote_volume ; is_frozen ; high24h ; low24h } ->
+        (id, last, ask, bid, pct_change, base_volume,
+         quote_volume, is_frozen, high24h, low24h))
+      (fun (id, last, ask, bid, pct_change, base_volume,
+            quote_volume, is_frozen, high24h, low24h) ->
+        { id ; last ; ask ; bid ; pct_change ; base_volume ;
+          quote_volume ; is_frozen ; high24h ; low24h })
+      (tup10
+         int polo_fl polo_fl polo_fl polo_fl polo_fl polo_fl
+         polo_bool polo_fl polo_fl)
 end
 
 let margin_enabled = function
@@ -157,13 +192,13 @@ module Trade = struct
              | Some t -> t in
            { gid ; id ; ts ; side ; price ; qty })
         (obj7
-           (opt "globalTradeID" string_int_or_int)
-           (req "tradeID" string_int_or_int)
+           (opt "globalTradeID" polo_int)
+           (req "tradeID" polo_int)
            (req "date" date)
            (req "type" Side.encoding)
-           (req "rate" string_float)
-           (req "amount" string_float)
-           (req "total" string_float))
+           (req "rate" polo_fl)
+           (req "amount" polo_fl)
+           (req "total" polo_fl))
   end
   include T
 end
@@ -193,5 +228,3 @@ module BookEntry = struct
   include T
 end
 
-let flstring = Json_encoding.(Float.(conv to_string of_string string))
-let intstring = Json_encoding.(conv string_of_int int_of_string string)

@@ -2,8 +2,8 @@ open Core
 open Async
 
 open Plnx
+open Plnx_ws_new
 module Rest = Plnx_rest
-module Ws = Plnx_ws_new
 
 let src = Logs.Src.create "plnx.ws-test"
     ~doc:"Poloniex API - WS test application"
@@ -138,19 +138,18 @@ let process_user_cmd key secret =
 let main cfg topics =
   let { Bs_devkit.Cfg.key ; secret ; _ } =
     List.Assoc.find_exn ~equal:String.equal cfg "PLNX" in
-  let to_ws, to_ws_w = Pipe.create () in
-  let connected = Condition.create () in
-  don't_wait_for begin
-    Condition.wait connected >>= fun () ->
-    Deferred.List.iter topics ~f:(fun t -> Pipe.write to_ws_w (Ws.Repr.Subscribe t))
-  end ;
-  let _restart, r = Ws.open_connection ~connected to_ws in
-  let log_incoming msg =
-    Logs_async.debug ~src (fun m -> m "%a" Ws.Repr.pp msg) in
-  Deferred.all_unit [
-    process_user_cmd key secret ;
-    Pipe.iter r ~f:log_incoming
-  ]
+  Plnx_ws_new_async.with_connection begin fun r w ->
+    Deferred.List.iter
+      topics ~f:begin fun t ->
+      Pipe.write w (Plnx_ws_new.Subscribe (`String t, None))
+    end >>= fun () ->
+    let log_incoming msg =
+      Logs_async.debug ~src (fun m -> m "%a" pp msg) in
+    Deferred.all_unit [
+      process_user_cmd key secret ;
+      Pipe.iter r ~f:log_incoming
+    ]
+  end
 
 let () =
   Command.async ~summary:"Poloniex WS client" begin
