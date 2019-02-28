@@ -3,6 +3,8 @@ open Async
 
 open Plnx
 
+val of_ptime : Ptime.t -> Time_ns.t
+
 module Currency : sig
   type t = {
     id: int;
@@ -147,7 +149,7 @@ val symbols :
 
 val tickers :
   ?buf:Bi_outbuf.t -> unit ->
-  (Ticker.t list, Http_error.t) Result.t Deferred.t
+  ((string * Ticker.t) list, Http_error.t) Result.t Deferred.t
 
 val books :
   ?buf:Bi_outbuf.t -> ?depth:int -> string ->

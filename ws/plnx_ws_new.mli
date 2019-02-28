@@ -30,7 +30,7 @@ type creds = {
 }
 
 type command =
-  | Subscribe of ([`String of string | `Int of int] * creds option)
-  | Unsubscribe of [`String of string | `Int of int]
+  | Subscribe of ([`String of string | `Id of int] * creds option)
+  | Unsubscribe of [`String of string | `Id of int]
 
 val command_encoding : command Json_encoding.encoding

@@ -29,16 +29,16 @@ type creds = {
   sign: string ;
 }
 
-let int_or_string_encoding =
+let id_or_string_encoding =
  let open Json_encoding in
   union [
-    case string (function `String s -> Some s | `Int _ -> None) (fun s -> `String s) ;
-    case int (function `String _ -> None | `Int i -> Some i) (fun i -> `Int i) ;
+    case string (function `String s -> Some s | `Id _ -> None) (fun s -> `String s) ;
+    case int (function `String _ -> None | `Id i -> Some i) (fun i -> `Id i) ;
   ]
 
 type command =
-  | Subscribe of ([`String of string | `Int of int] * creds option)
-  | Unsubscribe of [`String of string | `Int of int]
+  | Subscribe of ([`String of string | `Id of int] * creds option)
+  | Unsubscribe of [`String of string | `Id of int]
 
 let subscribe_encoding =
   let open Json_encoding in
@@ -53,7 +53,7 @@ let subscribe_encoding =
        | _ -> chanid, None)
     (obj5
        (req "command" (constant "subscribe"))
-       (req "channel" int_or_string_encoding)
+       (req "channel" id_or_string_encoding)
        (opt "key" string)
        (opt "payload" string)
        (opt "sign" string))
@@ -65,7 +65,7 @@ let unsubscribe_encoding =
     (fun ((), chanid) -> chanid)
     (obj2
        (req "command" (constant "unsubscribe"))
-       (req "channel" int_or_string_encoding))
+       (req "channel" id_or_string_encoding))
 
 let command_encoding =
   let open Json_encoding in

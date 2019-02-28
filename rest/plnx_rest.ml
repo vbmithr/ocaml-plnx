@@ -114,8 +114,8 @@ let tickers ?buf () =
   safe_get ?buf url >>| Result.bind ~f:begin function
     | `Assoc tickers ->
       begin try
-          Ok (List.rev_map tickers ~f:begin fun (_, t) ->
-              Yojson_encoding.destruct_safe Ticker.encoding t
+          Ok (List.rev_map tickers ~f:begin fun (symbol, t) ->
+              symbol, Yojson_encoding.destruct_safe Ticker.encoding t
             end)
         with exn -> Http_error.data_encoding exn
       end
