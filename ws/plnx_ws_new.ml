@@ -98,11 +98,12 @@ let book_encoding =
 let snapshot_encoding =
   let open Json_encoding in
   conv
-    (fun { symbol ; bid ; ask } -> (symbol, (bid, ask)))
-    (fun (symbol, (bid, ask)) -> { symbol ; bid ; ask })
-    (obj2
-       (req "currencyPair" string)
-       (req "orderBook" (tup2 book_encoding book_encoding)))
+    (fun { symbol ; bid ; ask } -> ((), (symbol, (bid, ask))))
+    (fun ((), (symbol, (bid, ask))) -> { symbol ; bid ; ask })
+    (tup2 (constant "i")
+       (obj2
+          (req "currencyPair" string)
+          (req "orderBook" (tup2 book_encoding book_encoding))))
 
 let side_encoding : Side.t Json_encoding.encoding =
   let open Json_encoding in
@@ -168,10 +169,18 @@ let ticker_encoding =
     (fun (chanid, (), t) -> { chanid ; seqnum = 0 ; events = [ Ticker t ] })
     (tup3 int null Ticker.ws_encoding)
 
+let hb_encoding =
+  let open Json_encoding in
+  conv
+    (fun _ -> invalid_arg "not implemented")
+    (fun chanid -> { chanid ; seqnum = 0 ; events = [] })
+    (tup1 int)
+
 let encoding =
   let open Json_encoding in
   union [
     case hello_encoding (fun _ -> None) (fun t -> t) ;
     case msg_encoding (fun t -> Some t) (fun t -> t) ;
     case ticker_encoding (fun t -> Some t) (fun t -> t) ;
+    case hb_encoding (fun t -> Some t) (fun t -> t) ;
   ]
