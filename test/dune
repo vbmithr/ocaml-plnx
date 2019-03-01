@@ -7,5 +7,5 @@
   bs-devkit
   logs-async-reporter
   plnx-rest
-  plnx-ws-new
-  plnx-ws-new-async))
+  plnx-ws
+  plnx-ws-async))

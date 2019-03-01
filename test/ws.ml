@@ -2,7 +2,7 @@ open Core
 open Async
 
 open Plnx
-open Plnx_ws_new
+open Plnx_ws
 module Rest = Plnx_rest
 
 let src = Logs.Src.create "plnx.ws-test"
@@ -138,10 +138,10 @@ let process_user_cmd key secret =
 let main cfg topics =
   let { Bs_devkit.Cfg.key ; secret ; _ } =
     List.Assoc.find_exn ~equal:String.equal cfg "PLNX" in
-  Plnx_ws_new_async.with_connection begin fun r w ->
+  Plnx_ws_async.with_connection begin fun r w ->
     Deferred.List.iter
       topics ~f:begin fun t ->
-      Pipe.write w (Plnx_ws_new.Subscribe (`String t, None))
+      Pipe.write w (Plnx_ws.Subscribe (`String t, None))
     end >>= fun () ->
     let log_incoming msg =
       Logs_async.debug ~src (fun m -> m "%a" pp msg) in

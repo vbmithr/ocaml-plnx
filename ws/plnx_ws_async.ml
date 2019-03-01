@@ -2,7 +2,7 @@ open Core
 open Async
 
 open Plnx
-open Plnx_ws_new
+open Plnx_ws
 
 let url = Uri.make ~scheme:"https" ~host:"api2.poloniex.com" ()
 (* let url = Uri.make ~scheme:"http" ~host:"127.0.0.1" ~port:14443 () *)

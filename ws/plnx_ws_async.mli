@@ -1,6 +1,6 @@
 open Core
 open Async
-open Plnx_ws_new
+open Plnx_ws
 
 val with_connection :
   ?buf:Bi_outbuf.t ->

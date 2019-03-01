@@ -1,8 +1,8 @@
 (library
- (name        plnx_ws_new)
- (public_name plnx-ws-new)
+ (name        plnx_ws)
+ (public_name plnx-ws)
  (preprocess (pps ppx_sexp_conv))
- (modules plnx_ws_new)
+ (modules plnx_ws)
  (libraries
   bs-devkit
   plnx
@@ -13,13 +13,13 @@
   fastws-async))
 
 (library
- (name        plnx_ws_new_async)
- (public_name plnx-ws-new-async)
+ (name        plnx_ws_async)
+ (public_name plnx-ws-async)
  (preprocess (pps ppx_sexp_conv))
- (modules plnx_ws_new_async)
+ (modules plnx_ws_async)
  (libraries
   plnx
-  plnx-ws-new
+  plnx-ws
   core
   async
   bs-devkit
