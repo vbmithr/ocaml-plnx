@@ -6,9 +6,8 @@ open Plnx_ws
 
 let url = Uri.make ~scheme:"https" ~host:"api2.poloniex.com" ()
 
-let with_connection ?(buf=Bi_outbuf.create 4096) ?heartbeat f =
-  let hb_ns = Option.map heartbeat ~f:Time_ns.Span.to_int63_ns in
-  Fastws_async.with_connection_ez ?hb_ns url ~f:begin fun r w ->
+let with_connection ?(buf=Bi_outbuf.create 4096) f =
+  Fastws_async.with_connection_ez url ~f:begin fun r w ->
     let r = Pipe.map r ~f:(fun msg -> Yojson.Safe.from_string ~buf msg) in
     let r =
       Pipe.map r ~f:(fun msg -> Yojson_encoding.destruct_safe encoding msg) in
