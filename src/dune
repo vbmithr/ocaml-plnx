@@ -1,0 +1,57 @@
+(library
+ (name        plnx)
+ (public_name plnx)
+ (modules plnx)
+ (preprocess (pps ppx_sexp_conv))
+ (libraries
+   sexplib
+   ptime
+   ppx_sexp_conv
+   yojson
+   ocplib-json-typed))
+
+(library
+ (name        plnx_rest)
+ (public_name plnx-rest)
+ (modules plnx_rest)
+ (preprocess (pps ppx_sexp_conv))
+ (libraries
+   plnx
+   core
+   async
+   yojson
+   jsonm
+   digestif.c
+   ocplib-json-typed
+   logs-async
+   cohttp-async))
+
+(library
+ (name        plnx_ws)
+ (public_name plnx-ws)
+ (preprocess (pps ppx_sexp_conv))
+ (modules plnx_ws)
+ (libraries
+   bs-devkit
+   plnx
+   core_kernel
+   logs-async
+   ptime
+   ocplib-json-typed
+   fastws-async))
+
+(library
+ (name        plnx_ws_async)
+ (public_name plnx-ws-async)
+ (preprocess (pps ppx_sexp_conv))
+ (modules plnx_ws_async)
+ (libraries
+   plnx
+   plnx-ws
+   core
+   async
+   bs-devkit
+   logs-async
+   ptime
+   ocplib-json-typed
+   fastws-async))
