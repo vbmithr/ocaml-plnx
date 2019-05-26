@@ -128,72 +128,71 @@ end
 
 val currencies : (Fastrest.get, (string * Currency.t) sexp_list, string) Fastrest.service
 val tickers : (Fastrest.get, (string * Ticker.t) sexp_list, string) Fastrest.service
-val books : ?depth:int -> string -> (Fastrest.get, Books.t, string) Fastrest.service
+val books : ?depth:int -> Pair.t -> (Fastrest.get, Books.t, string) Fastrest.service
 
 val trades :
   ?start_ts:Time_ns.t ->
   ?end_ts:Time_ns.t ->
-  string ->
-  (Plnx.Trade.t Pipe.Reader.t, Http_error.t) Result.t Deferred.t
+  Pair.t ->
+  (Plnx.Trade.t Pipe.Reader.t, string) Result.t Deferred.t
 
 val all_trades :
   ?wait:Time_ns.Span.t ->
   ?start_ts:Time_ns.t ->
-  ?end_ts:Time_ns.t -> string -> Plnx.Trade.t Pipe.Reader.t
+  ?end_ts:Time_ns.t -> Pair.t -> Plnx.Trade.t Pipe.Reader.t
 
-val margin_positions :
-  ?buf:Bi_outbuf.t ->
-  key:string -> secret:string -> unit ->
-  ((string * MarginPosition.t option) list, Http_error.t) Result.t Deferred.t
-
-val margin_account_summary :
-  ?buf:Bi_outbuf.t ->
-  key:string -> secret:string -> unit ->
-  (MarginAccountSummary.t, Http_error.t) Result.t Deferred.t
-
-val open_orders :
-  ?buf:Bi_outbuf.t -> ?symbol:string ->
-  key:string -> secret:string -> unit ->
-  ((string * OpenOrder.t list) list, Http_error.t) Result.t Deferred.t
-
-val trade_history :
-  ?buf:Bi_outbuf.t -> ?symbol:string ->
-  ?start:Time_ns.t -> ?stop:Time_ns.t ->
-  key:string -> secret:string -> unit ->
-  ((string * TradeHistory.t list) list, Http_error.t) Result.t Deferred.t
-
-val positive_balances :
-  ?buf:Bi_outbuf.t ->
-  key:string -> secret:string -> unit ->
-  ((Account.t * (string * float) list) list, Http_error.t) Result.t Deferred.t
-
-val balances :
-  ?buf:Bi_outbuf.t -> ?all:bool ->
-  key:string -> secret:string -> unit ->
-  ((string * Balance.t) list, Http_error.t) Result.t Deferred.t
-
-val submit_order :
-  ?buf:Bi_outbuf.t -> ?tif:time_in_force -> ?post_only:bool ->
-  key:string -> secret:string ->
-  side:Side.t -> symbol:string -> price:float -> qty:float -> unit ->
-  (OrderResponse.t, Http_error.t) result Deferred.t
-
-val submit_margin_order :
-  ?buf:Bi_outbuf.t -> ?tif:time_in_force ->
-  ?post_only:bool -> ?max_lending_rate:float ->
-  key:string -> secret:string ->
-  side:Side.t -> symbol:string -> price:float -> qty:float -> unit ->
-  (OrderResponse.t, Http_error.t) result Deferred.t
-
-val cancel_order :
-  ?buf:Bi_outbuf.t ->
-  key:string -> secret:string ->
-  order_id:int -> unit ->
-  (unit, Http_error.t) result Deferred.t
-
-val modify_order :
-  ?buf:Bi_outbuf.t -> ?qty:float ->
-  key:string -> secret:string ->
-  price:float -> order_id:int -> unit ->
-  (OrderResponse.t, Http_error.t) result Deferred.t
-
+(* val margin_positions :
+ *   ?buf:Bi_outbuf.t ->
+ *   key:string -> secret:string -> unit ->
+ *   ((string * MarginPosition.t option) list, Http_error.t) Result.t Deferred.t
+ * 
+ * val margin_account_summary :
+ *   ?buf:Bi_outbuf.t ->
+ *   key:string -> secret:string -> unit ->
+ *   (MarginAccountSummary.t, Http_error.t) Result.t Deferred.t
+ * 
+ * val open_orders :
+ *   ?buf:Bi_outbuf.t -> ?symbol:string ->
+ *   key:string -> secret:string -> unit ->
+ *   ((string * OpenOrder.t list) list, Http_error.t) Result.t Deferred.t
+ * 
+ * val trade_history :
+ *   ?buf:Bi_outbuf.t -> ?symbol:string ->
+ *   ?start:Time_ns.t -> ?stop:Time_ns.t ->
+ *   key:string -> secret:string -> unit ->
+ *   ((string * TradeHistory.t list) list, Http_error.t) Result.t Deferred.t
+ * 
+ * val positive_balances :
+ *   ?buf:Bi_outbuf.t ->
+ *   key:string -> secret:string -> unit ->
+ *   ((Account.t * (string * float) list) list, Http_error.t) Result.t Deferred.t
+ * 
+ * val balances :
+ *   ?buf:Bi_outbuf.t -> ?all:bool ->
+ *   key:string -> secret:string -> unit ->
+ *   ((string * Balance.t) list, Http_error.t) Result.t Deferred.t
+ * 
+ * val submit_order :
+ *   ?buf:Bi_outbuf.t -> ?tif:time_in_force -> ?post_only:bool ->
+ *   key:string -> secret:string ->
+ *   side:Side.t -> symbol:string -> price:float -> qty:float -> unit ->
+ *   (OrderResponse.t, Http_error.t) result Deferred.t
+ * 
+ * val submit_margin_order :
+ *   ?buf:Bi_outbuf.t -> ?tif:time_in_force ->
+ *   ?post_only:bool -> ?max_lending_rate:float ->
+ *   key:string -> secret:string ->
+ *   side:Side.t -> symbol:string -> price:float -> qty:float -> unit ->
+ *   (OrderResponse.t, Http_error.t) result Deferred.t
+ * 
+ * val cancel_order :
+ *   ?buf:Bi_outbuf.t ->
+ *   key:string -> secret:string ->
+ *   order_id:int -> unit ->
+ *   (unit, Http_error.t) result Deferred.t
+ * 
+ * val modify_order :
+ *   ?buf:Bi_outbuf.t -> ?qty:float ->
+ *   key:string -> secret:string ->
+ *   price:float -> order_id:int -> unit ->
+ *   (OrderResponse.t, Http_error.t) result Deferred.t *)

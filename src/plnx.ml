@@ -35,8 +35,8 @@ module Encoding = struct
 
   let polo_int =
     union [
-      case int (fun i -> Some i) (fun t -> t) ;
-      case string (fun i -> Some (string_of_int i)) int_of_string
+      case int53 (fun i -> Some i) (fun t -> t) ;
+      case string (fun i -> Some (Int64.to_string i)) Int64.of_string
     ]
 
   let polo_bool =
@@ -166,8 +166,9 @@ let margin_enabled = function
 module Trade = struct
   module T = struct
     type t = {
-      gid : int option ;
-      id : int ;
+      gid : int64 option ;
+      orderNumber: int64 option ;
+      id : int64 ;
       ts: Ptime.t ;
       side: Side.t ;
       price: float ;
@@ -176,8 +177,8 @@ module Trade = struct
 
     let compare { price ; _ } { price = price' ; _ } = Float.compare price price'
 
-    let create ?gid ~id ~ts ~side ~price ~qty () = {
-      gid ; id ; ts ; side ; price ; qty
+    let create ?gid ?orderNumber ~id ~ts ~side ~price ~qty () = {
+      gid ; id ; orderNumber ; ts ; side ; price ; qty
     }
 
     let encoding =
@@ -185,14 +186,15 @@ module Trade = struct
       let open Encoding in
       conv
         (fun _ -> invalid_arg "Trade.construct not implemented")
-        (fun (gid, id, date, side, price, qty, _total) ->
+        (fun (gid, orderNumber, id, date, side, price, qty, _total) ->
            let ts =
-             match Ptime.(add_span date (Span.unsafe_of_d_ps (0, Int64.of_int id))) with
+             match Ptime.(add_span date (Span.unsafe_of_d_ps (0, id))) with
              | None -> invalid_arg "Trade.encoding"
              | Some t -> t in
-           { gid ; id ; ts ; side ; price ; qty })
-        (obj7
+           { gid ; id ; orderNumber ; ts ; side ; price ; qty })
+        (obj8
            (opt "globalTradeID" polo_int)
+           (opt "orderNumber" polo_int)
            (req "tradeID" polo_int)
            (req "date" date)
            (req "type" Side.encoding)
@@ -212,4 +214,32 @@ module BookEntry = struct
   let compare { price ; _ } { price = price' ; _ } = Float.compare price price'
 
   let create ~price ~qty = { price ; qty }
+end
+
+module Pair = struct
+  type t = {
+    base: string ;
+    quote: string ;
+  } [@@deriving sexp]
+
+  let compare { base ; quote } { base = base' ; quote = quote' } =
+    match String.compare base base' with
+    | 0 -> String.compare quote quote'
+    | n -> n
+
+  let pp ppf { base ; quote } =
+    Format.fprintf ppf "%s_%s" quote base
+
+  let to_string { base ; quote } =
+    quote ^ "_" ^ base
+
+  let of_string s =
+    match String.split_on_char '_' s with
+    | [quote ; base] -> Some { base ; quote }
+    | _ -> None
+
+  let of_string_exn s =
+    match String.split_on_char '_' s with
+    | [quote ; base] -> { base ; quote }
+    | _ -> invalid_arg "pair_of_string_exn"
 end
