@@ -81,7 +81,6 @@ end
 
 module BookEntry : sig
   type t = {
-    side : Side.t ;
     price : float ;
     qty : float ;
   } [@@deriving sexp]
@@ -89,9 +88,7 @@ module BookEntry : sig
   val compare : t -> t -> int
   (** Uses price only *)
 
-  val create : side:Side.t -> price:float -> qty:float -> t
-
-  val encoding : t Json_encoding.encoding
+  val create : price:float -> qty:float -> t
 end
 
 val margin_enabled : string -> bool

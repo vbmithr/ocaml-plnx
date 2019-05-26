@@ -126,34 +126,9 @@ module Books : sig
   }
 end
 
-module Http_error : sig
-  type t =
-    | Cohttp of exn
-    | Client of string
-    | Server of string
-    | Poloniex of string
-    | Data_encoding of string
-    | Data_shape of string
-
-  val pp : Format.formatter -> t -> unit
-  val to_string : t -> string
-end
-
-val currencies :
-  ?buf:Bi_outbuf.t -> unit ->
-  ((string * Currency.t) list, Http_error.t) Result.t Deferred.t
-
-val symbols :
-  ?buf:Bi_outbuf.t -> unit ->
-  (string list, Http_error.t) Result.t Deferred.t
-
-val tickers :
-  ?buf:Bi_outbuf.t -> unit ->
-  ((string * Ticker.t) list, Http_error.t) Result.t Deferred.t
-
-val books :
-  ?buf:Bi_outbuf.t -> ?depth:int -> string ->
-  (Books.t, Http_error.t) Result.t Deferred.t
+val currencies : (Fastrest.get, (string * Currency.t) sexp_list, string) Fastrest.service
+val tickers : (Fastrest.get, (string * Ticker.t) sexp_list, string) Fastrest.service
+val books : ?depth:int -> string -> (Fastrest.get, Books.t, string) Fastrest.service
 
 val trades :
   ?start_ts:Time_ns.t ->

@@ -205,23 +205,11 @@ end
 
 module BookEntry = struct
   type t = {
-    side : Side.t ;
     price : float ;
     qty : float ;
   } [@@deriving sexp]
 
   let compare { price ; _ } { price = price' ; _ } = Float.compare price price'
 
-  let create ~side ~price ~qty = { side ; price ; qty }
-
-  let encoding =
-    let open Json_encoding in
-    conv
-      (fun { price ; side ; qty } -> (price, side, qty))
-      (fun (price, side, qty) -> { price ; side ; qty })
-      (obj3
-         (req "rate" float)
-         (req "type" Side.encoding)
-         (dft "amount" float 0.))
+  let create ~price ~qty = { price ; qty }
 end
-

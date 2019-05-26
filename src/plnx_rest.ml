@@ -2,66 +2,11 @@ open Core
 open Async
 
 open Plnx
+open Httpaf
 
-open Cohttp_async
-
-exception ClientError of string
-exception ServerError of string
-exception PoloniexError of string
-
-let src = Logs.Src.create "plnx.rest"
-      ~doc:"Poloniex API - REST interface"
-
-module Http_error = struct
-  type t =
-    | Cohttp of exn
-    | Client of string
-    | Server of string
-    | Poloniex of string
-    | Data_encoding of string
-    | Data_shape of string
-
-  let data_encoding exn =
-    let msg =
-      Format.asprintf "%a" (Json_encoding.print_error ?print_unknown:None) exn in
-    Result.fail (Data_encoding msg)
-
-  let data_shape msg = Result.fail (Data_shape msg)
-
-  let to_string = function
-    | Cohttp exn -> Exn.to_string exn
-    | Client msg -> "HTTP Client error: " ^ msg
-    | Server msg -> "HTTP Server error: " ^ msg
-    | Poloniex msg -> "Poloniex error: " ^ msg
-    | Data_encoding msg -> "Data encoding error: " ^ msg
-    | Data_shape msg -> "Data_shape error: " ^ msg
-
-  let pp ppf v =
-    Format.fprintf ppf "%s" (to_string v)
-end
-
-let safe_get ?buf url =
-  Monitor.try_with ~extract_exn:true begin fun () ->
-    Client.get url >>= fun (resp, body) ->
-    let status_code = Cohttp.Code.code_of_status resp.status in
-    Body.to_string body >>= fun body_str ->
-    Logs_async.debug ~src (fun m -> m "%s" body_str) >>| fun () ->
-    let body_json = Yojson.Safe.from_string ?buf body_str in
-    if Cohttp.Code.is_client_error status_code then
-      raise (ClientError body_str)
-    else if Cohttp.Code.is_server_error status_code then
-      raise (ServerError body_str)
-    else match body_json with
-      | `Assoc ["error", `String msg] ->
-        raise (PoloniexError msg)
-      | #Yojson.Safe.t as json ->
-        json
-  end >>| Result.map_error ~f:begin function
-    | ClientError str -> Http_error.Client str
-    | ServerError str -> Server str
-    | PoloniexError str -> Poloniex str
-    | exn -> Cohttp exn
-  end
+let src = Logs.Src.create "plnx.rest" ~doc:"Poloniex API - REST interface"
+module Log = (val Logs.src_log src : Logs.LOG)
+module Log_async = (val Logs_async.src_log src : Logs_async.LOG)
 
 let latest_nonce =
   let open Int63 in
@@ -75,191 +20,35 @@ let sign ~key ~secret ~data =
   let signature =
     Digestif.SHA512.(to_hex (hmac_string ~key:secret prehash)) in
   prehash,
-  Cohttp.Header.of_list [
+  Headers.of_list [
     "content-type", "application/x-www-form-urlencoded";
     "Key", key;
     "Sign", signature;
   ]
 
-let safe_post ?buf ~key ~secret ~data url =
-  let body, headers = sign ~key ~secret ~data in
-  let body = Body.of_string body in
-  Monitor.try_with ~extract_exn:true begin fun () ->
-    Client.post ~headers ~body url >>= fun (resp, body) ->
-    let status_code = Cohttp.Code.code_of_status resp.status in
-    Body.to_string body >>= fun body_str ->
-    Logs_async.debug ~src (fun m -> m "%s" body_str) >>| fun () ->
-    let body_json = Yojson.Safe.from_string ?buf body_str in
-    match body_json with
-    | `Assoc ["error", `String msg] ->
-      if Cohttp.Code.is_client_error status_code then raise (ClientError msg)
-      else if Cohttp.Code.is_server_error status_code then raise (ServerError msg)
-      else raise (PoloniexError msg)
-    | #Yojson.Safe.t as json ->
-      if Cohttp.Code.is_client_error status_code then raise (ClientError body_str)
-      else if Cohttp.Code.is_server_error status_code then raise (ServerError body_str)
-      else json
-  end >>| Result.map_error ~f:begin function
-    | ClientError str -> Http_error.Client str
-    | ServerError str -> Server str
-    | PoloniexError str -> Poloniex str
-    | exn -> Cohttp exn
-  end
+let base_url = Uri.make ~scheme:"https" ~host:"poloniex.com" ~path:"public" ()
+let trading_url = Uri.make ~scheme:"https" ~host:"poloniex.com" ~path:"tradingApi" ()
 
-let base_url = Uri.of_string "https://poloniex.com/public"
-let trading_url = Uri.of_string "https://poloniex.com/tradingApi"
+let result_encoding encoding =
+  let open Json_encoding in
+  union [
+    case (obj1 (req "error" (string)))
+      (function Error e -> Some e | Ok _ -> None)
+      (fun e -> Error e) ;
+    case encoding
+      (function Error _ -> None | Ok v -> Some v)
+      (fun v -> Ok v) ;
+  ]
 
-let tickers ?buf () =
-  let url = Uri.with_query' base_url ["command", "returnTicker"] in
-  safe_get ?buf url >>| Result.bind ~f:begin function
-    | `Assoc tickers ->
-      begin try
-          Ok (List.rev_map tickers ~f:begin fun (symbol, t) ->
-              symbol, Yojson_encoding.destruct_safe Ticker.encoding t
-            end)
-        with exn -> Http_error.data_encoding exn
-      end
-    | #Yojson.Safe.t -> Http_error.data_shape "expected object"
-  end
-
-let bids_asks_of_yojson side records =
-  List.map records ~f:(function
-      | `List [`String price; `Int qty] ->
-        BookEntry.create ~side ~price:(Float.of_string price) ~qty:(Int.to_float qty)
-      | `List [`String price; `Float qty] ->
-        BookEntry.create ~side ~price:(Float.of_string price) ~qty
-      | #Yojson.Safe.t -> invalid_arg "bids_asks_of_yojson")
-
-let bids_asks_of_yojson side = function
-  | `List records -> bids_asks_of_yojson side records
-  | #Yojson.Safe.t -> invalid_arg "bids_asks_of_yojson"
-
-let bids_of_yojson = bids_asks_of_yojson `buy
-let asks_of_yojson = bids_asks_of_yojson `sell
-
-module Books = struct
-  type t = {
-    asks: BookEntry.t list;
-    bids: BookEntry.t list;
-    isFrozen: bool;
-    seq: int;
-  }
-
-  let encoding =
-    let open Json_encoding in
-    conv
-      (fun _ -> invalid_arg "unsupported")
-      (fun (asks, bids, isFrozen, seq) ->
-         let asks = Json_repr.(any_to_repr (module Yojson) asks) |> asks_of_yojson in
-         let bids = Json_repr.(any_to_repr (module Yojson) bids) |> bids_of_yojson in
-         { asks ; bids ; isFrozen ; seq })
-      (obj4
-         (req "asks" any_value)
-         (req "bids" any_value)
-         (req "isFrozen" bool)
-         (req "seq" int))
-end
-
-let books ?buf ?depth symbol =
-  let url = Uri.with_query' base_url @@ List.filter_opt [
-      Some ("command", "returnOrderBook");
-      Some ("currencyPair", symbol);
-      Option.map depth ~f:(fun lvls -> "depth", Int.to_string lvls);
-    ] in
-  safe_get ?buf url >>| Result.bind ~f:begin fun json ->
-    try
-      Ok (Yojson_encoding.destruct_safe Books.encoding json)
-    with exn -> Http_error.data_encoding exn
-  end
-
-let fold_trades_exn w decoder (nb_decoded, name, tmp) chunk =
-  let chunk_len = String.length chunk in
-  let chunk = Caml.Bytes.unsafe_of_string chunk in
-  Jsonm.Manual.src decoder chunk 0 chunk_len;
-  let rec decode nb_decoded name tmp =
-    match Jsonm.decode decoder with
-    | `Error err ->
-      let err_str = Format.asprintf "%a" Jsonm.pp_error err in
-      Logs.err ~src (fun m -> m "%s" err_str) ;
-      failwith err_str
-    | `Lexeme (`Float f) -> decode nb_decoded "" ((name, `Int (Float.to_int f))::tmp)
-    | `Lexeme (`String s) -> decode nb_decoded "" ((name, `String s)::tmp)
-    | `Lexeme (`Name name) -> decode nb_decoded name tmp
-    | `Lexeme `Oe ->
-      let trade = Yojson_encoding.destruct_safe Trade.encoding (`Assoc tmp) in
-      Pipe.write w trade >>= fun () ->
-      decode (succ nb_decoded) "" []
-    | `Lexeme `Ae -> return (nb_decoded, name, tmp)
-    | `Lexeme #Jsonm.lexeme -> decode nb_decoded name tmp
-    | `Await -> return (nb_decoded, name, tmp)
-    | `End -> return (nb_decoded, name, tmp)
-  in
-  decode nb_decoded name tmp
-
-let int63_of_ts ts =
-  let open Int63 in
-  (Time_ns.to_int63_ns_since_epoch ts) / of_int 1_000_000_000
-
-let trades ?start_ts ?end_ts symbol =
-  let start_ts_sec = Option.map start_ts ~f:(Fn.compose Int63.to_string int63_of_ts) in
-  let end_ts_sec = Option.map end_ts ~f:(Fn.compose Int63.to_string int63_of_ts) in
-  let url = Uri.add_query_params' base_url @@ List.filter_opt Option.[
-      some ("command", "returnTradeHistory");
-      some ("currencyPair", symbol);
-      map start_ts_sec ~f:(fun t -> "start", t);
-      map end_ts_sec ~f:(fun t -> "end", t);
-    ] in
-  let decoder = Jsonm.decoder `Manual in
-  Logs_async.debug ~src (fun m -> m "GET %a" Uri.pp_hum url) >>= fun () ->
-  Monitor.try_with ~extract_exn:true begin fun () ->
-    Client.get url >>| fun (resp, body) ->
-    let status_code = Cohttp.Code.code_of_status resp.status in
-    if Cohttp.Code.is_client_error status_code then raise (ClientError "<body>")
-    else if Cohttp.Code.is_server_error status_code then raise (ServerError "<body>")
-    else
-      Pipe.create_reader ~close_on_exception:false begin fun w ->
-        let body_pipe = Body.to_pipe body in
-        Deferred.ignore @@ Pipe.fold body_pipe
-          ~init:(0, "", [])
-          ~f:(fold_trades_exn w decoder)
-      end
-  end >>| Result.map_error ~f:begin function
-    | ClientError str -> Http_error.Client str
-    | ServerError str -> Server str
-    | exn -> Cohttp exn
-  end
-
-let of_ptime t =
-  Ptime.to_rfc3339 t |> Time_ns.of_string
-
-let to_ptime t =
-  Time_ns.to_string t |> Ptime.of_rfc3339
-
-let all_trades
-    ?(wait=Time_ns.Span.of_int_ms 167)
-    ?(start_ts=Time_ns.epoch)
-    ?(end_ts=Time_ns.now ())
-    symbol =
-  let start_ts =
-    match to_ptime start_ts with
-    | Error _ -> invalid_arg "all_trades"
-    | Ok (v, _, _) -> v in
-  let rec inner cur_end_ts w =
-    trades ~end_ts:cur_end_ts symbol >>= function
-    | Error err ->
-      Logs_async.err ~src (fun m -> m "%a" Http_error.pp err)
-    | Ok trades ->
-      let oldest_ts = ref @@ Ptime.max in
-      Pipe.transfer trades w ~f:(fun t -> oldest_ts := t.ts; t) >>= fun () ->
-      if !oldest_ts = Ptime.max || !oldest_ts < start_ts then
-        (Pipe.close w; Deferred.unit)
-      else
-        Clock_ns.after wait >>= fun () ->
-        match Ptime.(sub_span !oldest_ts (Span.of_int_s 1)) with
-        | None -> assert false
-        | Some t -> inner (of_ptime t) w
-  in
-  Pipe.create_reader ~close_on_exception:false (inner end_ts)
+let depack_obj encoding =
+  let open Json_encoding in
+  conv
+    (fun _ -> invalid_arg "pack not supported")
+    (fun a -> match Json_repr.(to_yojson (from_any a)) with
+       | `Assoc vs ->
+         List.map vs ~f:(fun (n, v) -> n, Yojson_encoding.destruct_safe encoding v)
+       | #Yojson.Safe.t -> invalid_arg "depack_obj")
+    any_document
 
 module Currency = struct
   type t = {
@@ -295,27 +84,129 @@ module Currency = struct
       (merge_objs unit encoding)
 end
 
-let currencies ?buf () =
-  let url = Uri.add_query_params' base_url ["command", "returnCurrencies"] in
-  safe_get ?buf url >>| Result.bind ~f:begin function
-    | `Assoc currs ->
-      begin try
-          Ok (List.map currs ~f:begin fun (code, obj) ->
-              code, (Yojson_encoding.destruct_safe Currency.encoding obj)
-            end)
-        with exn -> Http_error.data_encoding exn
-      end
-    | #Yojson.Safe.t -> Result.fail (Http_error.Poloniex "currencies")
-  end
+let currencies =
+  Fastrest.get (result_encoding (depack_obj Currency.encoding))
+    (Uri.with_query' base_url ["command", "returnCurrencies"])
 
-let symbols ?buf () =
-  let url =
-    Uri.with_query' base_url ["command", "returnOrderBook";
-                              "currencyPair", "all"; "depth", "0"] in
-  safe_get ?buf url >>| Result.bind ~f:begin function
-    | `Assoc syms -> Result.return @@ List.rev_map syms ~f:fst
-    | #Yojson.Safe.t -> Result.fail (Http_error.Poloniex "symbols")
-  end
+let tickers = Fastrest.get (result_encoding (depack_obj Ticker.encoding))
+    (Uri.with_query' base_url ["command", "returnTicker"])
+
+module Books = struct
+  type t = {
+    asks: BookEntry.t list;
+    bids: BookEntry.t list;
+    isFrozen: bool;
+    seq: int;
+  }
+
+  let be_encoding =
+    let open Json_encoding in
+    conv
+      (fun { BookEntry.price ; qty } -> (price, qty))
+      (fun (price, qty) -> { price ; qty })
+      (tup2 Encoding.polo_fl float)
+
+  let encoding =
+    let open Json_encoding in
+    conv
+      (fun { asks ; bids ; isFrozen ; seq } -> (asks, bids, isFrozen, seq))
+      (fun (asks, bids, isFrozen, seq) -> { asks ; bids ; isFrozen ; seq })
+      (obj4
+         (req "asks" (list be_encoding))
+         (req "bids" (list be_encoding))
+         (req "isFrozen" bool)
+         (req "seq" int))
+end
+
+let books ?depth symbol =
+  Fastrest.get (result_encoding (Books.encoding))
+    (Uri.with_query' base_url @@ List.filter_opt [
+        Some ("command", "returnOrderBook");
+        Some ("currencyPair", symbol);
+        Option.map depth ~f:(fun lvls -> "depth", Int.to_string lvls);
+      ])
+
+let fold_trades_exn w decoder (nb_decoded, name, tmp) chunk =
+  let chunk_len = String.length chunk in
+  let chunk = Caml.Bytes.unsafe_of_string chunk in
+  Jsonm.Manual.src decoder chunk 0 chunk_len;
+  let rec decode nb_decoded name tmp =
+    match Jsonm.decode decoder with
+    | `Error err ->
+      let err_str = Format.asprintf "%a" Jsonm.pp_error err in
+      Log.err (fun m -> m "%s" err_str) ;
+      failwith err_str
+    | `Lexeme (`Float f) -> decode nb_decoded "" ((name, `Int (Float.to_int f))::tmp)
+    | `Lexeme (`String s) -> decode nb_decoded "" ((name, `String s)::tmp)
+    | `Lexeme (`Name name) -> decode nb_decoded name tmp
+    | `Lexeme `Oe ->
+      let trade = Yojson_encoding.destruct_safe Trade.encoding (`Assoc tmp) in
+      Pipe.write w trade >>= fun () ->
+      decode (succ nb_decoded) "" []
+    | `Lexeme `Ae -> return (nb_decoded, name, tmp)
+    | `Lexeme #Jsonm.lexeme -> decode nb_decoded name tmp
+    | `Await -> return (nb_decoded, name, tmp)
+    | `End -> return (nb_decoded, name, tmp)
+  in
+  decode nb_decoded name tmp
+
+let int63_of_ts ts =
+  let open Int63 in
+  (Time_ns.to_int63_ns_since_epoch ts) / of_int 1_000_000_000
+
+let trades ?start_ts ?end_ts symbol =
+  let start_ts_sec = Option.map start_ts ~f:(Fn.compose Int63.to_string int63_of_ts) in
+  let end_ts_sec = Option.map end_ts ~f:(Fn.compose Int63.to_string int63_of_ts) in
+  let url = Uri.add_query_params' base_url @@ List.filter_opt Option.[
+      some ("command", "returnTradeHistory");
+      some ("currencyPair", symbol);
+      map start_ts_sec ~f:(fun t -> "start", t);
+      map end_ts_sec ~f:(fun t -> "end", t);
+    ] in
+  let decoder = Jsonm.decoder `Manual in
+  Log_async.debug (fun m -> m "GET %a" Uri.pp_hum url) >>= fun () ->
+  Fastrest.simple_call ~meth:`GET url >>| fun (resp, body) ->
+  if Status.is_error resp.status then
+    Error resp.reason
+  else Result.return @@
+    Pipe.create_reader begin fun w ->
+      let body_pipe = Pipe.o body in
+      Deferred.ignore @@ Pipe.fold body_pipe
+        ~init:(0, "", [])
+        ~f:(fold_trades_exn w decoder)
+    end
+
+let of_ptime t =
+  Ptime.to_rfc3339 t |> Time_ns.of_string
+
+let to_ptime t =
+  Time_ns.to_string t |> Ptime.of_rfc3339
+
+let all_trades
+    ?(wait=Time_ns.Span.of_int_ms 167)
+    ?(start_ts=Time_ns.epoch)
+    ?(end_ts=Time_ns.now ())
+    symbol =
+  let start_ts =
+    match to_ptime start_ts with
+    | Error _ -> invalid_arg "all_trades"
+    | Ok (v, _, _) -> v in
+  let rec inner cur_end_ts w =
+    trades ~end_ts:cur_end_ts symbol >>= function
+    | Error err ->
+      Log_async.err (fun m -> m "%a" Http_error.pp err)
+    | Ok trades ->
+      let oldest_ts = ref @@ Ptime.max in
+      Pipe.transfer trades w ~f:(fun t -> oldest_ts := t.ts; t) >>= fun () ->
+      if !oldest_ts = Ptime.max || !oldest_ts < start_ts then
+        (Pipe.close w; Deferred.unit)
+      else
+        Clock_ns.after wait >>= fun () ->
+        match Ptime.(sub_span !oldest_ts (Span.of_int_s 1)) with
+        | None -> assert false
+        | Some t -> inner (of_ptime t) w
+  in
+  Pipe.create_reader ~close_on_exception:false (inner end_ts)
 
 module Balance = struct
   type t = {
