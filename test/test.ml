@@ -41,7 +41,9 @@ let rest = [
     Plnx_rest.trades { base="ETH"; quote="BTC" } >>= function
     | Ok v -> Pipe.drain v
     | Error e -> Alcotest.fail e
-  end
+  end ;
+
+  wrap_request "balances" (Plnx_rest.balances ()) ;
 ]
 
 let () =

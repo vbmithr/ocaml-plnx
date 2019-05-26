@@ -12,19 +12,18 @@ let latest_nonce =
   let open Int63 in
   ref (Time_ns.(to_int63_ns_since_epoch (now ())) / of_int 1_000)
 
-let sign ~key ~secret ~data =
+let authf { Fastrest.params ; _ } { Fastrest.key ; secret ; _ } =
   let nonce = !latest_nonce in
   Int63.incr latest_nonce ;
-  let data = ("nonce", [Int63.to_string nonce]) :: data in
-  let prehash = Uri.encoded_of_query data in
+  let params = ("nonce", [Int63.to_string nonce]) :: params in
+  let prehash = Uri.encoded_of_query params in
   let signature =
     Digestif.SHA512.(to_hex (hmac_string ~key:secret prehash)) in
-  prehash,
-  Headers.of_list [
-    "content-type", "application/x-www-form-urlencoded";
-    "Key", key;
-    "Sign", signature;
-  ]
+  let headers = Headers.of_list [
+      "Key", key;
+      "Sign", signature;
+    ] in
+  { Fastrest.headers ; params }
 
 let base_url = Uri.make ~scheme:"https" ~host:"poloniex.com" ~path:"public" ()
 let trading_url = Uri.make ~scheme:"https" ~host:"poloniex.com" ~path:"tradingApi" ()
@@ -225,20 +224,23 @@ module Balance = struct
          (req "btcValue" polo_fl))
 end
 
-(* let balances ?buf ?(all=true) ~key ~secret () =
- *   let data = List.filter_opt [
- *       Some ("command", ["returnCompleteBalances"]);
- *       if all then Some ("account", ["all"]) else None
- *     ] in
- *   safe_post ?buf ~key ~secret ~data trading_url >>| Result.bind ~f:begin function
- *     | `Assoc balances -> begin
- *         try
- *           Result.return @@
- *           List.Assoc.map balances ~f:(Yojson_encoding.destruct_safe Balance.encoding)
- *         with exn -> Http_error.data_encoding exn
- *       end
- *     | #Yojson.Safe.t -> Result.fail (Http_error.Poloniex "balances")
- *   end *)
+let balances ?(all=true) () =
+  let params = List.filter_opt [
+      Some ("command", ["returnCompleteBalances"]);
+      if all then Some ("account", ["all"]) else None
+    ] in
+  Fastrest.post_form ~auth:authf ~params
+    (result_encoding (depack_obj Balance.encoding)) trading_url
+
+  (*   safe_post ?buf ~key ~secret ~data trading_url >>| Result.bind ~f:begin function
+   *   | `Assoc balances -> begin
+   *       try
+   *         Result.return @@
+   *         List.Assoc.map balances ~f:(Yojson_encoding.destruct_safe Balance.encoding)
+   *       with exn -> Http_error.data_encoding exn
+   *     end
+   *   | #Yojson.Safe.t -> Result.fail (Http_error.Poloniex "balances")
+   * end *)
 
 module Account = struct
   type t =
