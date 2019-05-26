@@ -1,11 +1,21 @@
-(executable
- (name ws)
- (public_name plnx-cli)
- (package plnx-cli)
+(test
+ (name       test)
+ (modules    test)
  (preprocess (pps ppx_jane ppx_sexp_conv))
  (libraries
-  bs-devkit
-  logs-async-reporter
   plnx-rest
-  plnx-ws
-  plnx-ws-async))
+  alcotest-async
+  logs-async-reporter))
+
+; (executable
+;  (name ws)
+;  (modules ws)
+;  (public_name plnx-cli)
+;  (package plnx-cli)
+;  (preprocess (pps ppx_jane ppx_sexp_conv))
+;  (libraries
+;   bs-devkit
+;   logs-async-reporter
+;   plnx-rest
+;   plnx-ws
+;   plnx-ws-async))

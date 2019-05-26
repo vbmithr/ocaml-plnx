@@ -2,7 +2,7 @@ module Encoding : sig
   val polo_fl : float Json_encoding.encoding
   (** [flstring] is an encoder for a float encoded as a string *)
 
-  val polo_int : int Json_encoding.encoding
+  val polo_int : int64 Json_encoding.encoding
   (** [intstring] is an encoder for a int encoded as a string *)
 
   val polo_bool : bool Json_encoding.encoding
@@ -61,8 +61,9 @@ end
 
 module Trade : sig
   type t = {
-    gid : int option ;
-    id : int ;
+    gid : int64 option ;
+    orderNumber : int64 option ;
+    id : int64 ;
     ts : Ptime.t ;
     side : Side.t ;
     price : float ;
@@ -73,7 +74,8 @@ module Trade : sig
   (** Uses price only *)
 
   val create :
-    ?gid:int -> id:int -> ts:Ptime.t -> side:Side.t ->
+    ?gid:int64 -> ?orderNumber:int64 -> id:int64 ->
+    ts:Ptime.t -> side:Side.t ->
     price:float -> qty:float -> unit -> t
 
   val encoding : t Json_encoding.encoding
@@ -81,7 +83,6 @@ end
 
 module BookEntry : sig
   type t = {
-    side : Side.t ;
     price : float ;
     qty : float ;
   } [@@deriving sexp]
@@ -89,9 +90,21 @@ module BookEntry : sig
   val compare : t -> t -> int
   (** Uses price only *)
 
-  val create : side:Side.t -> price:float -> qty:float -> t
+  val create : price:float -> qty:float -> t
+end
 
-  val encoding : t Json_encoding.encoding
+module Pair : sig
+  type t = {
+    base: string ;
+    quote: string ;
+  } [@@deriving sexp]
+
+  val compare : t -> t -> int
+
+  val pp : Format.formatter -> t -> unit
+  val to_string : t -> string
+  val of_string : string -> t option
+  val of_string_exn : string -> t
 end
 
 val margin_enabled : string -> bool

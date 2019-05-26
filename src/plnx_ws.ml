@@ -9,7 +9,7 @@ type snapshot = {
 
 type event =
   | Snapshot of snapshot
-  | BookEntry of BookEntry.t
+  | BookEntry of Side.t * BookEntry.t
   | Trade of Trade.t
   | Ticker of Ticker.t
 [@@deriving sexp]
@@ -125,10 +125,10 @@ let trade_encoding =
   let open Json_encoding in
   let open Encoding in
   conv
-    (fun { Trade.gid = _ ; id ; ts ; side ; price ; qty } ->
+    (fun { Trade.id ; ts ; side ; price ; qty ; _ } ->
        ((), id, side, price, qty, ts))
     (fun ((), id, side, price, qty, ts) ->
-       { Trade.id ; ts ; side ; price ; qty ; gid = None})
+       Trade.create ~id ~side ~price ~qty ~ts ())
     (tup6
        (constant "t") polo_int side_encoding polo_fl polo_fl ts_encoding)
 
@@ -136,8 +136,8 @@ let order_encoding =
   let open Json_encoding in
   let open Encoding in
   conv
-    (fun { BookEntry.side ; price ; qty } -> ((), side, price, qty))
-    (fun ((), side, price, qty) -> { BookEntry.side ; price ; qty })
+    (fun (side, { BookEntry.price ; qty }) -> ((), side, price, qty))
+    (fun ((), side, price, qty) -> side, { BookEntry.price ; qty })
     (tup4 (constant "o") side_encoding polo_fl polo_fl)
 
 let event_encoding =
@@ -145,7 +145,7 @@ let event_encoding =
   union [
     case snapshot_encoding (function Snapshot s -> Some s | _ -> None) (fun s -> Snapshot s) ;
     case trade_encoding (function Trade t -> Some t | _ -> None) (fun t -> Trade t) ;
-    case order_encoding (function BookEntry e -> Some e | _ -> None) (fun e -> BookEntry e) ;
+    case order_encoding (function BookEntry (s, e) -> Some (s, e) | _ -> None) (fun (s, e) -> BookEntry (s, e)) ;
   ]
 
 let hello_encoding =

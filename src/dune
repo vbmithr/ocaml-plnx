@@ -15,6 +15,7 @@
  (public_name plnx-rest)
  (modules plnx_rest)
  (preprocess (pps ppx_sexp_conv))
+ (flags (-w -32))
  (libraries
    plnx
    core
@@ -24,7 +25,8 @@
    digestif.c
    ocplib-json-typed
    logs-async
-   cohttp-async))
+   httpaf
+   fastrest))
 
 (library
  (name        plnx_ws)

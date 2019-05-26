@@ -9,7 +9,7 @@ type snapshot = {
 
 type event =
   | Snapshot of snapshot
-  | BookEntry of BookEntry.t
+  | BookEntry of Side.t * BookEntry.t
   | Trade of Trade.t
   | Ticker of Ticker.t
 [@@deriving sexp]
