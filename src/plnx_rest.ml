@@ -1,8 +1,9 @@
 open Core
 open Async
+open Httpaf
+open Fastrest
 
 open Plnx
-open Httpaf
 
 let src = Logs.Src.create "plnx.rest" ~doc:"Poloniex API - REST interface"
 module Log = (val Logs.src_log src : Logs.LOG)
@@ -12,10 +13,13 @@ let latest_nonce =
   let open Int63 in
   ref (Time_ns.(to_int63_ns_since_epoch (now ())) / of_int 1_000)
 
-let authf { Fastrest.params ; _ } { Fastrest.key ; secret ; _ } =
+let authf srv { Fastrest.key ; secret ; _ } =
+  let ps = match srv.params with
+    | Form ps -> ps
+    | Json (_,_) -> assert false in
   let nonce = !latest_nonce in
   Int63.incr latest_nonce ;
-  let params = ("nonce", [Int63.to_string nonce]) :: params in
+  let params = ("nonce", [Int63.to_string nonce]) :: ps in
   let prehash = Uri.encoded_of_query params in
   let signature =
     Digestif.SHA512.(to_hex (hmac_string ~key:secret prehash)) in
@@ -23,7 +27,7 @@ let authf { Fastrest.params ; _ } { Fastrest.key ; secret ; _ } =
       "Key", key;
       "Sign", signature;
     ] in
-  { Fastrest.headers ; params }
+  { Fastrest.headers ; params = Form ps }
 
 let base_url = Uri.make ~scheme:"https" ~host:"poloniex.com" ~path:"public" ()
 let trading_url = Uri.make ~scheme:"https" ~host:"poloniex.com" ~path:"tradingApi" ()
