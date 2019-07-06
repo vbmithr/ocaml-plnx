@@ -138,7 +138,7 @@ let process_user_cmd key secret =
 let main cfg topics =
   let { Bs_devkit.Cfg.key ; secret ; _ } =
     List.Assoc.find_exn ~equal:String.equal cfg "PLNX" in
-  Plnx_ws_async.with_connection begin fun r w ->
+  Plnx_ws_async.with_connection_exn begin fun r w ->
     Deferred.List.iter
       topics ~f:begin fun t ->
       Pipe.write w (Plnx_ws.Subscribe (`String t, None))
