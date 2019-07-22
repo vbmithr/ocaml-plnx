@@ -2,12 +2,13 @@ open Core_kernel
 open Plnx
 
 type snapshot = {
-  symbol : string ;
+  symbol : Pair.t ;
   bid : float Float.Map.t ;
   ask : float Float.Map.t ;
 } [@@deriving sexp]
 
 type event =
+  | Err of string
   | Snapshot of snapshot
   | BookEntry of Side.t * BookEntry.t
   | Trade of Trade.t
@@ -29,8 +30,20 @@ type creds = {
   sign: string ;
 }
 
+type channel =
+  | Notifications of creds
+  | Ticker
+  | Volume
+  | Heartbeat
+  | TradesQuotes of Pair.t
+
 type command =
-  | Subscribe of ([`String of string | `Id of int] * creds option)
-  | Unsubscribe of [`String of string | `Id of int]
+  | Subscribe of channel
+  | Unsubscribe of int
+
+val ticker : command
+val volume : command
+val tradesQuotes : Pair.t -> command
+val unsubscribe : int -> command
 
 val command_encoding : command Json_encoding.encoding

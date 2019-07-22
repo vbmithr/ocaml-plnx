@@ -7,15 +7,15 @@
   alcotest-async
   logs-async-reporter))
 
-; (executable
-;  (name ws)
-;  (modules ws)
-;  (public_name plnx-cli)
-;  (package plnx-cli)
-;  (preprocess (pps ppx_jane ppx_sexp_conv))
-;  (libraries
-;   bs-devkit
-;   logs-async-reporter
-;   plnx-rest
-;   plnx-ws
-;   plnx-ws-async))
+(executable
+ (name ws)
+ (modules ws)
+ (public_name plnx-cli)
+ (package plnx-cli)
+ (preprocess (pps ppx_jane ppx_sexp_conv))
+ (libraries
+  bs-devkit
+  logs-async-reporter
+  plnx-rest
+  plnx-ws
+  plnx-ws-async))

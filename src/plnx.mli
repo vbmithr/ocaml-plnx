@@ -105,6 +105,7 @@ module Pair : sig
   val to_string : t -> string
   val of_string : string -> t option
   val of_string_exn : string -> t
+  val encoding : t Json_encoding.encoding
 end
 
 val margin_enabled : string -> bool

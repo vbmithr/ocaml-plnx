@@ -242,4 +242,8 @@ module Pair = struct
     match String.split_on_char '_' s with
     | [quote ; base] -> { base ; quote }
     | _ -> invalid_arg "pair_of_string_exn"
+
+  let encoding =
+    let open Json_encoding in
+    conv to_string of_string_exn string
 end
