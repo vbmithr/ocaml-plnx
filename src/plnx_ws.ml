@@ -130,8 +130,8 @@ let book_encoding =
 
 let snapshot_encoding =
   conv
-    (fun { symbol ; bid ; ask } -> ((), (symbol, (bid, ask))))
-    (fun ((), (symbol, (bid, ask))) -> { symbol ; bid ; ask })
+    (fun { symbol ; bid ; ask } -> ((), (symbol, (ask, bid))))
+    (fun ((), (symbol, (ask, bid))) -> { symbol ; bid ; ask })
     (tup2 (constant "i")
        (obj2
           (req "currencyPair" Pair.encoding)
