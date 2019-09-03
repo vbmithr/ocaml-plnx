@@ -100,12 +100,17 @@ module Pair : sig
   } [@@deriving sexp]
 
   val compare : t -> t -> int
+  val equal : t -> t -> bool
+  val hash : t -> int
 
   val pp : Format.formatter -> t -> unit
   val to_string : t -> string
   val of_string : string -> t option
+  val of_string_opt : string -> (t, string) result
   val of_string_exn : string -> t
   val encoding : t Json_encoding.encoding
+
+  module Table : Hashtbl.S with type key = t
 end
 
 val margin_enabled : string -> bool

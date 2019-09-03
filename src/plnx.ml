@@ -217,15 +217,21 @@ module BookEntry = struct
 end
 
 module Pair = struct
-  type t = {
-    base: string ;
-    quote: string ;
-  } [@@deriving sexp]
+  module T = struct
+    type t = {
+      base: string ;
+      quote: string ;
+    } [@@deriving sexp]
+    let hash = Hashtbl.hash
+    let compare { base ; quote } { base = base' ; quote = quote' } =
+      match String.compare base base' with
+      | 0 -> String.compare quote quote'
+      | n -> n
+    let equal a b = compare a b = 0
+  end
 
-  let compare { base ; quote } { base = base' ; quote = quote' } =
-    match String.compare base base' with
-    | 0 -> String.compare quote quote'
-    | n -> n
+  include(T)
+
 
   let pp ppf { base ; quote } =
     Format.fprintf ppf "%s_%s" quote base
@@ -238,6 +244,11 @@ module Pair = struct
     | [quote ; base] -> Some { base ; quote }
     | _ -> None
 
+  let of_string_opt s =
+    match String.split_on_char '_' s with
+    | [quote ; base] -> Ok { base ; quote }
+    | _ -> Error s
+
   let of_string_exn s =
     match String.split_on_char '_' s with
     | [quote ; base] -> { base ; quote }
@@ -246,4 +257,6 @@ module Pair = struct
   let encoding =
     let open Json_encoding in
     conv to_string of_string_exn string
+
+  module Table = Hashtbl.Make(T)
 end
