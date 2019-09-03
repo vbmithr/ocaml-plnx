@@ -43,13 +43,13 @@ let result_encoding encoding =
       (fun v -> Ok v) ;
   ]
 
-let depack_obj encoding =
+let depack_obj ~f encoding =
   let open Json_encoding in
   conv
     (fun _ -> invalid_arg "pack not supported")
     (fun a -> match Json_repr.(to_yojson (from_any a)) with
        | `Assoc vs ->
-         List.map vs ~f:(fun (n, v) -> n, Yojson_encoding.destruct_safe encoding v)
+         List.map vs ~f:(fun (n, v) -> f n, Yojson_encoding.destruct_safe encoding v)
        | #Yojson.Safe.t -> invalid_arg "depack_obj")
     any_document
 
@@ -88,10 +88,10 @@ module Currency = struct
 end
 
 let currencies =
-  Fastrest.get (result_encoding (depack_obj Currency.encoding))
+  Fastrest.get (result_encoding (depack_obj ~f:Fn.id Currency.encoding))
     (Uri.with_query' base_url ["command", "returnCurrencies"])
 
-let tickers = Fastrest.get (result_encoding (depack_obj Ticker.encoding))
+let tickers = Fastrest.get (result_encoding (depack_obj ~f:Pair.of_string_exn Ticker.encoding))
     (Uri.with_query' base_url ["command", "returnTicker"])
 
 module Books = struct
@@ -234,7 +234,7 @@ let balances ?(all=true) () =
       if all then Some ("account", ["all"]) else None
     ] in
   Fastrest.post_form ~auth:authf ~params
-    (result_encoding (depack_obj Balance.encoding)) trading_url
+    (result_encoding (depack_obj ~f:Fn.id Balance.encoding)) trading_url
 
   (*   safe_post ?buf ~key ~secret ~data trading_url >>| Result.bind ~f:begin function
    *   | `Assoc balances -> begin

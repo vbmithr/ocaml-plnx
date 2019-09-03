@@ -127,7 +127,7 @@ module Books : sig
 end
 
 val currencies : (Fastrest.form, (string * Currency.t) list, string) Fastrest.service
-val tickers : (Fastrest.form, (string * Ticker.t) list, string) Fastrest.service
+val tickers : (Fastrest.form, (Pair.t * Ticker.t) list, string) Fastrest.service
 val books : ?depth:int -> Pair.t -> (Fastrest.form, Books.t, string) Fastrest.service
 
 val trades :
