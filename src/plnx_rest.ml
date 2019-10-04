@@ -36,8 +36,8 @@ let result_encoding encoding =
   let open Json_encoding in
   union [
     case (obj1 (req "error" (string)))
-      (function Error e -> Some e | Ok _ -> None)
-      (fun e -> Error e) ;
+      (fun _ -> assert false)
+      (fun e -> Error (Error.of_string e)) ;
     case encoding
       (function Error _ -> None | Ok v -> Some v)
       (fun v -> Ok v) ;

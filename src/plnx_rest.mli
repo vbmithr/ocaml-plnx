@@ -126,9 +126,9 @@ module Books : sig
   }
 end
 
-val currencies : (Fastrest.form, (string * Currency.t) list, string) Fastrest.service
-val tickers : (Fastrest.form, (Pair.t * Ticker.t) list, string) Fastrest.service
-val books : ?depth:int -> Pair.t -> (Fastrest.form, Books.t, string) Fastrest.service
+val currencies : (Fastrest.form, (string * Currency.t) list) Fastrest.service
+val tickers : (Fastrest.form, (Pair.t * Ticker.t) list) Fastrest.service
+val books : ?depth:int -> Pair.t -> (Fastrest.form, Books.t) Fastrest.service
 
 val trades :
   ?start_ts:Time_ns.t ->
@@ -142,7 +142,7 @@ val all_trades :
   ?end_ts:Time_ns.t -> Pair.t -> Plnx.Trade.t Pipe.Reader.t
 
 val balances : ?all:bool -> unit ->
-  (Fastrest.form, (string * Balance.t) list, string) Fastrest.service
+  (Fastrest.form, (string * Balance.t) list) Fastrest.service
 
 (* val margin_positions :
  *   ?buf:Bi_outbuf.t ->
