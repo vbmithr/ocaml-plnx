@@ -24,11 +24,7 @@ module Ptime : sig
 end
 
 module Side : sig
-  type t = [
-    | `buy
-    | `sell
-    | `buy_sell_unset
-  ] [@@deriving sexp]
+  type t = Fixtypes.Side.t [@@deriving sexp]
 
   val to_string : t -> string
   val of_string : string -> t

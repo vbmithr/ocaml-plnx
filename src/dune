@@ -4,6 +4,7 @@
  (modules plnx)
  (preprocess (pps ppx_sexp_conv))
  (libraries
+   fixtypes
    sexplib
    ptime
    ppx_sexp_conv

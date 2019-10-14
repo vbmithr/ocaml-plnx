@@ -61,31 +61,26 @@ module Encoding = struct
 end
 
 module Side = struct
-  type t = [
-    | `buy
-    | `sell
-    | `buy_sell_unset
-  ] [@@deriving sexp]
+  type t = Fixtypes.Side.t [@@deriving sexp]
 
   let to_string = function
-    | `buy -> "buy"
-    | `sell -> "sell"
-    | `buy_sell_unset -> ""
+    | Fixtypes.Side.Buy -> "buy"
+    | Sell -> "sell"
 
   let of_string = function
-    | "buy" -> `buy
-    | "sell" -> `sell
-    | "bid" -> `buy
-    | "ask" -> `sell
+    | "buy" -> Fixtypes.Side.Buy
+    | "sell" -> Sell
+    | "bid" -> Buy
+    | "ask" -> Sell
     | _ -> invalid_arg "Side.of_string"
 
   let encoding =
     let open Json_encoding in
     string_enum [
-      "buy", `buy ;
-      "bid", `buy ;
-      "sell", `sell ;
-      "ask", `sell ;
+      "buy", Fixtypes.Side.Buy ;
+      "bid", Buy ;
+      "sell", Sell ;
+      "ask", Sell ;
     ]
 end
 

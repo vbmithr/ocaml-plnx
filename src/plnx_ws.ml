@@ -139,8 +139,9 @@ let snapshot_encoding =
 
 let side_encoding : Side.t Json_encoding.encoding =
   conv
-    (function `buy -> 1 | `sell -> 0 | `buy_sell_unset -> 0)
-    (function 1 -> `buy | 0 -> `sell | _ -> `buy_sell_unset) int
+    (function Fixtypes.Side.Buy -> 1 | Sell -> 0)
+    (function 1 -> Fixtypes.Side.Buy | 0 -> Sell
+            | _ -> invalid_arg "side_encoding") int
 
 let ts_encoding =
   conv

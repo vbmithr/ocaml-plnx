@@ -640,9 +640,9 @@ module MarginPosition = struct
          match side with
          | Flat -> None
          | Long ->
-           Some { price ; qty ; total ; pl ; lending_fees ; side = `buy }
+           Some { price ; qty ; total ; pl ; lending_fees ; side = Buy }
          | Short ->
-           Some { price ; qty ; total ; pl ; lending_fees ; side = `sell })
+           Some { price ; qty ; total ; pl ; lending_fees ; side = Sell })
       (merge_objs unit (obj6
          (req "basePrice" polo_fl)
          (req "amount" polo_fl)
