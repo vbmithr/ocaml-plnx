@@ -1,6 +1,8 @@
 open Core_kernel
 open Plnx
 
+val url : Uri.t
+
 type snapshot = {
   symbol : Pair.t ;
   bid : float Float.Map.t ;

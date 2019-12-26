@@ -2,6 +2,8 @@ open Core_kernel
 open Plnx
 open Json_encoding
 
+let url = Uri.make ~scheme:"https" ~host:"api2.poloniex.com" ()
+
 type snapshot = {
   symbol : Pair.t ;
   bid : float Float.Map.t ;

@@ -146,7 +146,7 @@ let process_user_cmd w =
 let main () =
   (* let { Bs_devkit.Cfg.key ; secret ; _ } =
    *   List.Assoc.find_exn ~equal:String.equal cfg "PLNX" in *)
-  Plnx_ws_async.with_connection_exn begin fun r w ->
+  Plnx_ws_async.with_connection_exn url ~f:begin fun r w ->
     let log_incoming msg =
       Logs_async.debug ~src (fun m -> m "%a" pp msg) in
     Deferred.all_unit [
