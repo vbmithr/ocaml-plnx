@@ -95,6 +95,10 @@ module Pair : sig
     quote: string ;
   } [@@deriving sexp]
 
+  module Set   : Set.S with type elt := t
+  module Map   : Map.S with type key := t
+  module Table : Hashtbl.S with type key := t
+
   val compare : t -> t -> int
   val equal : t -> t -> bool
   val hash : t -> int
@@ -106,7 +110,6 @@ module Pair : sig
   val of_string_exn : string -> t
   val encoding : t Json_encoding.encoding
 
-  module Table : Hashtbl.S with type key = t
 end
 
 val margin_enabled : string -> bool

@@ -224,9 +224,10 @@ module Pair = struct
       | n -> n
     let equal a b = compare a b = 0
   end
-
-  include(T)
-
+  include T
+  module Set = Set.Make(T)
+  module Map = Map.Make(T)
+  module Table = Hashtbl.Make(T)
 
   let pp ppf { base ; quote } =
     Format.fprintf ppf "%s_%s" quote base
@@ -252,6 +253,4 @@ module Pair = struct
   let encoding =
     let open Json_encoding in
     conv to_string of_string_exn string
-
-  module Table = Hashtbl.Make(T)
 end
