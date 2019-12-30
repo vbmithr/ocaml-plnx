@@ -3,9 +3,9 @@
  (modules    test)
  (preprocess (pps ppx_jane ppx_sexp_conv))
  (libraries
-  plnx-rest
-  alcotest-async
-  logs-async-reporter))
+   plnx-rest
+   alcotest-async
+   logs-async-reporter))
 
 (executable
  (name ws)
@@ -14,8 +14,10 @@
  (package plnx-cli)
  (preprocess (pps ppx_jane ppx_sexp_conv))
  (libraries
-  bs-devkit
-  logs-async-reporter
-  plnx-rest
-  plnx-ws
-  plnx-ws-async))
+   core
+   async
+   fastws-async
+   bs-devkit
+   logs-async-reporter
+   plnx-rest
+   plnx-ws))

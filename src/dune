@@ -42,20 +42,3 @@
    ptime
    ocplib-json-typed
    fastws-async))
-
-(library
- (name        plnx_ws_async)
- (public_name plnx-ws-async)
- (preprocess (pps ppx_sexp_conv))
- (modules plnx_ws_async)
- (libraries
-   uri-sexp
-   plnx
-   plnx-ws
-   core
-   async
-   bs-devkit
-   logs-async
-   ptime
-   ocplib-json-typed
-   fastws-async))

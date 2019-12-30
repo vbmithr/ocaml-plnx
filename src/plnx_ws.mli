@@ -49,3 +49,5 @@ val tradesQuotes : Pair.t -> command
 val unsubscribe : int -> command
 
 val command_encoding : command Json_encoding.encoding
+val of_string : ?buf:Bi_outbuf.t -> string -> t
+val string_of_command : ?buf:Bi_outbuf.t -> command -> string
