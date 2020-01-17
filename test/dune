@@ -1,10 +1,11 @@
 (test
  (name       test)
  (modules    test)
- (preprocess (pps ppx_jane ppx_sexp_conv))
+ (preprocess (pps ppx_jane))
  (libraries
    base64
    plnx-rest
+   alcotest
    alcotest-async
    logs-async-reporter))
 
@@ -13,7 +14,7 @@
  (modules ws)
  (public_name plnx-cli)
  (package plnx-cli)
- (preprocess (pps ppx_jane ppx_sexp_conv))
+ (preprocess (pps ppx_jane))
  (libraries
    core
    async

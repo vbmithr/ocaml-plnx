@@ -7,7 +7,6 @@
    fixtypes
    sexplib
    ptime
-   ppx_sexp_conv
    yojson
    ocplib-json-typed))
 
@@ -16,13 +15,11 @@
  (public_name plnx-rest)
  (modules plnx_rest)
  (preprocess (pps ppx_sexp_conv))
- (flags (-w -32))
  (libraries
    plnx
    core
    async
    yojson
-   jsonm
    digestif.c
    ocplib-json-typed
    logs-async
@@ -35,10 +32,7 @@
  (preprocess (pps ppx_sexp_conv))
  (modules plnx_ws)
  (libraries
-   bs-devkit
    plnx
    core_kernel
-   logs-async
    ptime
-   ocplib-json-typed
-   fastws-async))
+   ocplib-json-typed))
