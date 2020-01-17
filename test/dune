@@ -3,6 +3,7 @@
  (modules    test)
  (preprocess (pps ppx_jane ppx_sexp_conv))
  (libraries
+   base64
    plnx-rest
    alcotest-async
    logs-async-reporter))
