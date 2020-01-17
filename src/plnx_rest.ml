@@ -1,5 +1,4 @@
 open Core
-open Async
 open Httpaf
 open Fastrest
 
@@ -128,16 +127,6 @@ let books ?depth pair =
         Some ("currencyPair", Pair.to_string pair);
         Option.map depth ~f:(fun lvls -> "depth", Int.to_string lvls);
       ])
-
-let int63_of_ts ts =
-  let open Int63 in
-  (Time_ns.to_int63_ns_since_epoch ts) / of_int 1_000_000_000
-
-let of_ptime t =
-  Ptime.to_rfc3339 t |> Time_ns.of_string
-
-let to_ptime t =
-  Time_ns.to_string t |> Ptime.of_rfc3339
 
 module Balance = struct
   type t = {
@@ -415,7 +404,7 @@ module OpenOrder = struct
   let encoding =
     let open Json_encoding in
     conv
-      (fun _ -> invalid_arg "unsupported")
+      (fun _ -> assert false)
       (fun (orderNumber, typ, rate, startingAmount, amount, _total, date, margin) ->
          let id = Int.of_string orderNumber in
          let side = Side.of_string typ in
@@ -561,11 +550,11 @@ module MarginPosition = struct
       "none", Flat ;
     ]
 
-  let position_encoding =
+  let encoding =
     let open Json_encoding in
     let open Encoding in
     conv
-      (fun _ -> ((), (0., 0., 0., 0., 0., Flat)))
+      (fun _ -> assert false)
       (fun ((), (price, qty, total, pl, lending_fees, side)) ->
          match side with
          | Flat -> None

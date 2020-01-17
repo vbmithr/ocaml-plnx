@@ -1,9 +1,6 @@
 open Core
-open Async
 
 open Plnx
-
-val of_ptime : Ptime.t -> Time_ns.t
 
 module Currency : sig
   type t = {
@@ -46,6 +43,7 @@ module TradeHistory : sig
   } [@@deriving sexp]
 
   val compare : t -> t -> int
+  val encoding : t Json_encoding.encoding
 
   module Set : Set.S with type Elt.t = t
 end
@@ -71,6 +69,7 @@ module OpenOrder : sig
     margin:int -> t
 
   val compare : t -> t -> int
+  val encoding : t Json_encoding.encoding
 
   module Set : Set.S with type Elt.t = t
 end
@@ -84,6 +83,8 @@ module MarginPosition : sig
     lending_fees: float;
     side: Side.t;
   } [@@deriving sexp]
+
+  val encoding : t option Json_encoding.encoding
 end
 
 module MarginAccountSummary : sig
@@ -97,6 +98,7 @@ module MarginAccountSummary : sig
   } [@@deriving sexp]
 
   val empty : t
+  val encoding : t Json_encoding.encoding
 end
 
 module Account : sig
@@ -104,6 +106,8 @@ module Account : sig
     | Exchange
     | Margin
     | Lending [@@deriving sexp]
+
+  val of_string : string -> t
 end
 
 module OrderResponse : sig
@@ -112,6 +116,8 @@ module OrderResponse : sig
     trades : (string * Plnx.Trade.t list) list;
     amount_unfilled : float ;
   } [@@deriving sexp]
+
+  val encoding : t Json_encoding.encoding
 
   val trades_of_symbol :
     (string * Plnx.Trade.t list) list -> string -> Plnx.Trade.t list
