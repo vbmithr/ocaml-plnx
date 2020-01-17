@@ -130,17 +130,6 @@ val currencies : (Fastrest.form, (string * Currency.t) list) Fastrest.service
 val tickers : (Fastrest.form, (Pair.t * Ticker.t) list) Fastrest.service
 val books : ?depth:int -> Pair.t -> (Fastrest.form, Books.t) Fastrest.service
 
-val trades :
-  ?start_ts:Time_ns.t ->
-  ?end_ts:Time_ns.t ->
-  Pair.t ->
-  (Plnx.Trade.t Pipe.Reader.t, string) Result.t Deferred.t
-
-val all_trades :
-  ?wait:Time_ns.Span.t ->
-  ?start_ts:Time_ns.t ->
-  ?end_ts:Time_ns.t -> Pair.t -> Plnx.Trade.t Pipe.Reader.t
-
 val balances : ?all:bool -> unit ->
   (Fastrest.form, (string * Balance.t) list) Fastrest.service
 

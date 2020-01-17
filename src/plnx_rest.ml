@@ -129,85 +129,15 @@ let books ?depth pair =
         Option.map depth ~f:(fun lvls -> "depth", Int.to_string lvls);
       ])
 
-let fold_trades_exn w decoder (nb_decoded, name, tmp) chunk =
-  let chunk_len = String.length chunk in
-  let chunk = Caml.Bytes.unsafe_of_string chunk in
-  Jsonm.Manual.src decoder chunk 0 chunk_len;
-  let rec decode nb_decoded name tmp =
-    match Jsonm.decode decoder with
-    | `Error err ->
-      let err_str = Format.asprintf "%a" Jsonm.pp_error err in
-      Log.err (fun m -> m "%s" err_str) ;
-      failwith err_str
-    | `Lexeme (`Float f) -> decode nb_decoded "" ((name, `Int (Float.to_int f))::tmp)
-    | `Lexeme (`String s) -> decode nb_decoded "" ((name, `String s)::tmp)
-    | `Lexeme (`Name name) -> decode nb_decoded name tmp
-    | `Lexeme `Oe ->
-      let trade = Yojson_encoding.destruct_safe Trade.encoding (`Assoc tmp) in
-      Pipe.write w trade >>= fun () ->
-      decode (succ nb_decoded) "" []
-    | `Lexeme `Ae -> return (nb_decoded, name, tmp)
-    | `Lexeme #Jsonm.lexeme -> decode nb_decoded name tmp
-    | `Await -> return (nb_decoded, name, tmp)
-    | `End -> return (nb_decoded, name, tmp)
-  in
-  decode nb_decoded name tmp
-
 let int63_of_ts ts =
   let open Int63 in
   (Time_ns.to_int63_ns_since_epoch ts) / of_int 1_000_000_000
-
-let trades ?start_ts ?end_ts pair =
-  let start_ts_sec = Option.map start_ts ~f:(Fn.compose Int63.to_string int63_of_ts) in
-  let end_ts_sec = Option.map end_ts ~f:(Fn.compose Int63.to_string int63_of_ts) in
-  let url = Uri.add_query_params' base_url @@ List.filter_opt Option.[
-      some ("command", "returnTradeHistory");
-      some ("currencyPair", Pair.to_string pair);
-      map start_ts_sec ~f:(fun t -> "start", t);
-      map end_ts_sec ~f:(fun t -> "end", t);
-    ] in
-  let decoder = Jsonm.decoder `Manual in
-  Log_async.debug (fun m -> m "GET %a" Uri.pp_hum url) >>= fun () ->
-  Fastrest.simple_call ~meth:`GET url >>| fun (resp, body) ->
-  if Status.is_error resp.status then
-    Error resp.reason
-  else Result.return @@
-    Pipe.create_reader ~close_on_exception:false begin fun w ->
-      Deferred.ignore @@ Pipe.fold body
-        ~init:(0, "", [])
-        ~f:(fold_trades_exn w decoder)
-    end
 
 let of_ptime t =
   Ptime.to_rfc3339 t |> Time_ns.of_string
 
 let to_ptime t =
   Time_ns.to_string t |> Ptime.of_rfc3339
-
-let all_trades
-    ?(wait=Time_ns.Span.of_int_ms 167)
-    ?(start_ts=Time_ns.epoch)
-    ?(end_ts=Time_ns.now ())
-    symbol =
-  let start_ts =
-    match to_ptime start_ts with
-    | Error _ -> invalid_arg "all_trades"
-    | Ok (v, _, _) -> v in
-  let rec inner cur_end_ts w =
-    trades ~end_ts:cur_end_ts symbol >>= function
-    | Error err -> Log_async.err (fun m -> m "%s" err)
-    | Ok trades ->
-      let oldest_ts = ref @@ Ptime.max in
-      Pipe.transfer trades w ~f:(fun t -> oldest_ts := t.ts; t) >>= fun () ->
-      if !oldest_ts = Ptime.max || !oldest_ts < start_ts then
-        (Pipe.close w; Deferred.unit)
-      else
-        Clock_ns.after wait >>= fun () ->
-        match Ptime.(sub_span !oldest_ts (Span.of_int_s 1)) with
-        | None -> assert false
-        | Some t -> inner (of_ptime t) w
-  in
-  Pipe.create_reader ~close_on_exception:false (inner end_ts)
 
 module Balance = struct
   type t = {
