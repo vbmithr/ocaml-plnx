@@ -166,15 +166,15 @@ let balances ?(all=true) () =
   Fastrest.post_form ~auth:authf ~params
     (result_encoding (depack_obj ~f:Fn.id Balance.encoding)) trading_url
 
-  (*   safe_post ?buf ~key ~secret ~data trading_url >>| Result.bind ~f:begin function
-   *   | `Assoc balances -> begin
-   *       try
-   *         Result.return @@
-   *         List.Assoc.map balances ~f:(Yojson_encoding.destruct_safe Balance.encoding)
-   *       with exn -> Http_error.data_encoding exn
-   *     end
-   *   | #Yojson.Safe.t -> Result.fail (Http_error.Poloniex "balances")
-   * end *)
+(*   safe_post ?buf ~key ~secret ~data trading_url >>| Result.bind ~f:begin function
+ *   | `Assoc balances -> begin
+ *       try
+ *         Result.return @@
+ *         List.Assoc.map balances ~f:(Yojson_encoding.destruct_safe Balance.encoding)
+ *       with exn -> Http_error.data_encoding exn
+ *     end
+ *   | #Yojson.Safe.t -> Result.fail (Http_error.Poloniex "balances")
+ * end *)
 
 module Account = struct
   type t =
@@ -464,10 +464,10 @@ module TradeHistory = struct
     | Settlement [@@deriving sexp]
 
   let trade_category_of_string = function
-  | "exchange" -> Exchange
-  | "marginTrade" -> Margin
-  | "settlement" -> Settlement
-  | s -> invalid_argf "trade_category_of_string: %s" s ()
+    | "exchange" -> Exchange
+    | "marginTrade" -> Margin
+    | "settlement" -> Settlement
+    | s -> invalid_argf "trade_category_of_string: %s" s ()
 
   module T = struct
     type t = {
@@ -573,13 +573,14 @@ module MarginPosition = struct
            Some { price ; qty ; total ; pl ; lending_fees ; side = Buy }
          | Short ->
            Some { price ; qty ; total ; pl ; lending_fees ; side = Sell })
-      (merge_objs unit (obj6
-         (req "basePrice" polo_fl)
-         (req "amount" polo_fl)
-         (req "total" polo_fl)
-         (req "pl" polo_fl)
-         (req "lendingFees" polo_fl)
-         (req "type" side_encoding)))
+      (merge_objs unit
+         (obj6
+            (req "basePrice" polo_fl)
+            (req "amount" polo_fl)
+            (req "total" polo_fl)
+            (req "pl" polo_fl)
+            (req "lendingFees" polo_fl)
+            (req "type" side_encoding)))
 end
 
 (* let margin_positions ?buf ~key ~secret () =
