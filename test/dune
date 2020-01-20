@@ -1,6 +1,7 @@
 (test
  (name       test)
  (modules    test)
+ (package plnx-rest)
  (preprocess (pps ppx_jane))
  (libraries
    base64
