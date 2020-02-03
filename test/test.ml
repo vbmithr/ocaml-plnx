@@ -12,7 +12,7 @@ open Async
 
 let wrap_request ?(speed=`Quick) n service =
   Alcotest_async.test_case n speed begin fun () ->
-    Deferred.ignore (Fastrest.request service)
+    Deferred.ignore_m (Fastrest.request service)
   end
 
 let rest = [
