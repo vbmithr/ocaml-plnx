@@ -144,11 +144,12 @@ let process_user_cmd w =
   loop ()
 
 let main () =
-  (* let { Bs_devkit.Cfg.key ; secret ; _ } =
-   *   List.Assoc.find_exn ~equal:String.equal cfg "PLNX" in *)
+  let module Encoding = Json_encoding.Make(Json_repr.Yojson) in
   let buf = Bi_outbuf.create 4096 in
-  let of_string = of_string ~buf in
-  let to_string = string_of_command ~buf in
+  let of_string s =
+    Encoding.destruct encoding (Yojson.Safe.from_string ~buf s) in
+  let to_string t =
+    Yojson.Safe.to_string ~buf (Encoding.construct command_encoding t) in
   Fastws_async.with_connection ~of_string ~to_string url begin fun r w ->
     let log_incoming msg =
       Logs_async.debug ~src (fun m -> m "%a" pp msg) in
@@ -162,7 +163,6 @@ let () =
   Command.async ~summary:"Poloniex WS client" begin
     let open Command.Let_syntax in
     [%map_open
-      (* let cfg = Bs_devkit.Cfg.param () *)
       let () = Logs_async_reporter.set_level_via_param [] in
       fun () ->
         Logs.set_reporter (Logs_async_reporter.reporter ()) ;

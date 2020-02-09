@@ -19,8 +19,8 @@
  (libraries
    core
    async
+   yojson
    fastws-async
-   bs-devkit
    logs-async-reporter
    plnx-rest
    plnx-ws))

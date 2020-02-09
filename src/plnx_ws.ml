@@ -213,10 +213,3 @@ let encoding =
     case ticker_encoding (fun t -> Some t) (fun t -> t) ;
     case hb_encoding (fun t -> Some t) (fun t -> t) ;
   ]
-
-let of_string ?buf msg =
-  Yojson_encoding.destruct_safe encoding (Yojson.Safe.from_string ?buf msg)
-
-let string_of_command ?buf cmd =
-  Yojson.Safe.to_string ?buf (Yojson_encoding.construct command_encoding cmd)
-

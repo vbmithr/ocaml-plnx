@@ -7,7 +7,6 @@
    fixtypes
    sexplib
    ptime
-   yojson
    ocplib-json-typed))
 
 (library

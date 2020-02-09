@@ -4,6 +4,17 @@ open Fastrest
 
 open Plnx
 
+module Yojson_encoding = struct
+  include Json_encoding.Make(Json_repr.Yojson)
+
+  let destruct_safe encoding value =
+    try destruct encoding value with exn ->
+      let value_str = Yojson.Safe.to_string value in
+      Format.eprintf "%s@.%a@." value_str
+        (Json_encoding.print_error ?print_unknown:None) exn ;
+      raise exn
+end
+
 let src = Logs.Src.create "plnx.rest" ~doc:"Poloniex API - REST interface"
 module Log = (val Logs.src_log src : Logs.LOG)
 module Log_async = (val Logs_async.src_log src : Logs_async.LOG)
