@@ -6,9 +6,9 @@
  (libraries
    base64
    plnx-rest
-   alcotest
-   alcotest-async
-   logs-async-reporter))
+   core
+   async
+   alcotest-async))
 
 (executable
  (name ws)

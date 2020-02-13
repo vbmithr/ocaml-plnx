@@ -1,4 +1,6 @@
+open Core
 open Async
+open Alcotest_async
 
 (* let auth =
  *   let key, secret =
@@ -11,7 +13,7 @@ open Async
  *   } *)
 
 let wrap_request ?(speed=`Quick) n service =
-  Alcotest_async.test_case n speed begin fun () ->
+  test_case n speed begin fun () ->
     Deferred.ignore_m (Fastrest.request service)
   end
 
@@ -22,9 +24,11 @@ let rest = [
   (* wrap_request "balances" (Plnx_rest.balances ()) ; *)
 ]
 
-let () =
-  Logs.set_reporter (Logs_async_reporter.reporter ()) ;
-  Logs.set_level (Some Debug) ;
-  Alcotest.run "plnx" [
+let main () =
+  run "plnx" [
     "rest", rest ;
   ]
+
+let () =
+  don't_wait_for (main ()) ;
+  never_returns (Scheduler.go ()) ;

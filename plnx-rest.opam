@@ -10,9 +10,11 @@ run-test: [ "dune" "runtest" "-j" jobs "-p" name ]
 depends: [
   "dune" {>= "1.11.4"}
   "plnx" {= version}
-  "core_kernel" {>= "v0.12.3"}
+  "core" {>= "v0.13.0"}
   "ptime" {>= "0.8.5"}
   "ocplib-json-typed" {>= "0.7.1"}
+  "async" {with-test & >= "v0.13.0"}
+  "alcotest-async" {with-test & >= "1.0.0"}
 ]
 synopsis: "Poloniex API"
 description: """
