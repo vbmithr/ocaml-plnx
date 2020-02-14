@@ -1,7 +1,5 @@
 open Core
-open Httpaf
 open Fastrest
-
 open Plnx
 
 module Yojson_encoding = struct
@@ -14,10 +12,6 @@ module Yojson_encoding = struct
         (Json_encoding.print_error ?print_unknown:None) exn ;
       raise exn
 end
-
-let src = Logs.Src.create "plnx.rest" ~doc:"Poloniex API - REST interface"
-module Log = (val Logs.src_log src : Logs.LOG)
-module Log_async = (val Logs_async.src_log src : Logs_async.LOG)
 
 let latest_nonce =
   let open Int63 in
@@ -33,7 +27,7 @@ let authf srv { Fastrest.key ; secret ; _ } =
   let prehash = Uri.encoded_of_query params in
   let signature =
     Digestif.SHA512.(to_hex (hmac_string ~key:secret prehash)) in
-  let headers = Headers.of_list [
+  let headers = Httpaf.Headers.of_list [
       "Key", key;
       "Sign", signature;
     ] in

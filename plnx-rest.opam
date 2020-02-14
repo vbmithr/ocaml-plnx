@@ -8,9 +8,14 @@ doc: "https://vbmithr.github.io/ocaml-plnx/doc"
 build: [ "dune" "build" "-j" jobs "-p" name ]
 run-test: [ "dune" "runtest" "-j" jobs "-p" name ]
 depends: [
+  "ocaml" {>= "4.08.0"}
   "dune" {>= "1.11.4"}
   "plnx" {= version}
+  "fastrest" {= version}
   "core" {>= "v0.13.0"}
+  "yojson" {>= "1.7.0"}
+  "digestif" {>= "0.8.0-1"}
+  "httpaf" {>= "0.6.5"}
   "ptime" {>= "0.8.5"}
   "ocplib-json-typed" {>= "0.7.1"}
   "async" {with-test & >= "v0.13.0"}

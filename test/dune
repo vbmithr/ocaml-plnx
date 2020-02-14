@@ -4,7 +4,6 @@
  (package plnx-rest)
  (preprocess (pps ppx_jane))
  (libraries
-   base64
    plnx-rest
    core
    async

@@ -17,11 +17,9 @@
  (libraries
    plnx
    core
-   async
    yojson
    digestif.c
    ocplib-json-typed
-   logs-async
    httpaf
    fastrest))
 
